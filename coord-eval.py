@@ -60,6 +60,7 @@ def main():
     args = parser.parse_args()
 
     # Load catchment data
+    # TODO this should come from querying the hand db database (see the inundate query in the queries folder of this repo)
     with open(args.catchment_data, "r") as f:
         inundate_data = json.load(f)
 
@@ -79,7 +80,6 @@ def main():
         metadata = {
             "forecast_path": args.forecast_path,
             "output_path": output_path,
-            "catchment_id": catchment_id,
             "catchment_data_path": catchment_data_path,
             "window_size": "1024",
         }

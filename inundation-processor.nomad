@@ -3,7 +3,6 @@ job "inundation-processor" {
     meta_required = [
       "forecast_path",
       "output_path", 
-      "catchment_id",
       "catchment_data_path"
     ]
     meta_optional = ["window_size"]
@@ -28,7 +27,6 @@ job "inundation-processor" {
           "--catchment-data", "${NOMAD_META_catchment_data_path}",
           "--forecast-path", "${NOMAD_META_forecast_path}",
           "--output-path", "${NOMAD_META_output_path}",
-          "--catchment-id", "${NOMAD_META_catchment_id}",
           "--window-size", "${NOMAD_META_window_size}"
         ]
       }
