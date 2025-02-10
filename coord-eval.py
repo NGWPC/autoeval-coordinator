@@ -17,7 +17,8 @@ class NomadCoordinator:
     def __init__(self, nomad_addr: str = "http://localhost:4646"):
         self.nomad_addr = nomad_addr
         self.headers = {"Content-Type": "application/json"}
-        self.s3_client = boto3.client("s3")
+        session = boto3.Session(profile_name="default")
+        self.s3_client = session.client("s3")
         self.console = Console()
 
     def upload_catchment_data(
