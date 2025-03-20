@@ -1,4 +1,4 @@
-## Coordinator (`coordinator`)  
+## Eval Coordinator
 ### Description  
 The coordinator is the entry point to the evaluation pipeline. It takes a gpkg containing either a polygon or multipolygon geometry and then uses that to run and monitor batch jobs for each step along the evaluation pipeline for all the polygons submitted by the user. 
 
