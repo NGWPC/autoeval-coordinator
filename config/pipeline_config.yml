@@ -1,0 +1,29 @@
+nomad:
+  address: "http://127.0.0.1:4646" 
+  token: null
+  namespace: "*"
+
+jobs:
+  hand_inundator: "hand-inundation-processor" 
+  fim_mosaicker: "fim-mosaic-processor"      
+
+s3:
+  bucket: "your-single-fim-data-bucket" 
+  base_prefix: "pipeline-runs"
+
+mock_data_paths:
+  # Path to the JSON file containing mock catchment data.
+  mock_catchment_data: "./mock_data/mock_catchments.json"
+
+  # Path to the JSON file containing the input polygon definitions.
+  polygon_data_file: "./mock_data/mock_polygons.json"
+
+  forecast_csv_template: "forecasts/{region}/forecast_{polygon_id}.csv" # Example path inside the bucket
+
+defaults:
+  geo_mem_cache_inundator: 512
+  geo_mem_cache_mosaicker: 256
+  fim_type: "extent"
+  mosaic_resolution: 10.0
+  window_size: 2
+  http_connection_limit: 10 

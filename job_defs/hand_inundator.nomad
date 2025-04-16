@@ -18,7 +18,6 @@ job "inundation-processor" {
       config {
         image = "inundation-processor:v1"
         
-        # Mount AWS credentials
         volumes = [
           "/home/dylan.lee/.aws:/root/.aws:ro"
         ]
