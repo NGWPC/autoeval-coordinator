@@ -57,7 +57,7 @@ class PipelineCoordinator:
                     del self._active_pipeline_tasks[pipeline.pipeline_id]
 
     async def _run_single_pipeline_task(
-        self, polygon_id: str, polygon_data: Dict, pipeline_id: str
+        self, polygon_data: Dict, pipeline_id: str
     ) -> Dict:
         pipeline: Optional[PolygonPipeline] = None
         task_status = PipelineState.FAILED
@@ -65,7 +65,6 @@ class PipelineCoordinator:
         task_error: Optional[BaseException] = None
         try:
             pipeline = PolygonPipeline(
-                polygon_id,
                 pipeline_id,
                 polygon_data,
                 self.config,
@@ -105,7 +104,6 @@ class PipelineCoordinator:
                 await pipeline.cleanup()
         return {
             "pipeline_id": pipeline_id,
-            "polygon_id": polygon_id,
             "status": task_status,
             "result": task_result,
             "error": task_error,
@@ -151,11 +149,9 @@ class PipelineCoordinator:
                     f"Pipeline task {original_task.get_name()} failed: {res}",
                     exc_info=False,
                 )
-                poly_id_from_name = original_task.get_name().split("-")[-1]
                 final_results.append(
                     {
                         "pipeline_id": p_id,
-                        "polygon_id": poly_id_from_name,
                         "status": PipelineState.FAILED,
                         "error": res,
                     }

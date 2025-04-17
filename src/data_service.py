@@ -36,11 +36,8 @@ class DataService:
             logging.error(f"Error reading/parsing {self.mock_data_path}: {e}")
             return {"catchments": {}, "hand_version": "error_read_decode"}
 
-    async def query_for_catchments(self, polygon_data: Dict) -> Dict:
+    async def query_for_catchments(self) -> Dict:
         """Returns the loaded mock catchment data."""
-        logging.info(
-            f"Data service query for polygon {polygon_data.get('id', 'N/A')}..."
-        )
         await asyncio.sleep(0.01)
         data = await self._load_mock_data()
         logging.info(

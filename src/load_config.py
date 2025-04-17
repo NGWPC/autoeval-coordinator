@@ -35,7 +35,7 @@ class S3Config(BaseModel):
 class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
     polygon_data_file: str = "mock_polygons.json"  # Path to polygon data
-    forecast_csv: str = "forecasts/{region}/forecast_{polygon_id}.csv"
+    forecast_csv: str = "s3path/to/flowfile.csv"
 
 
 class Defaults(BaseModel):

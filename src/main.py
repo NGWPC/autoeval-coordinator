@@ -70,7 +70,6 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
 
             for result in all_pipeline_results:
                 pipeline_id = result.get("pipeline_id", "N/A")
-                polygon_id = result.get("polygon_id", "N/A")
                 status = result.get("status")  # Get status (might be None or invalid)
                 error = result.get("error")
                 result_data = result.get("result")
@@ -113,7 +112,7 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
 
                 # Log the individual pipeline outcome
                 logging.info(
-                    f"Pipeline {pipeline_id} (Poly: {polygon_id}): Final outcome/state: {log_status_str}. "
+                    f"Pipeline {pipeline_id}: Final outcome/state: {log_status_str}. "
                     f"Result: {result_data}.{error_info}"
                 )
 
