@@ -15,16 +15,12 @@ from pipeline import PolygonPipeline, PipelineState
 class PipelineCoordinator:
     """Manages the execution and lifecycle of multiple PolygonPipelines."""
 
-    # Accept http_session and s3_client (even if s3_client is conceptual/mock initially)
-    def __init__(
-        self, config: AppConfig, http_session: aiohttp.ClientSession, s3_client: Any
-    ):
+    def __init__(self, config: AppConfig, http_session: aiohttp.ClientSession):
         self.config = config
         # Pass http_session to NomadApiClient
         self.nomad_client = NomadApiClient(config, http_session)
         self.job_monitor = NomadJobMonitor(self.nomad_client)
-        # Pass s3_client to DataService
-        self.data_service = DataService(config, s3_client)  # Pass s3_client
+        self.data_service = DataService(config)
         self._active_pipeline_tasks: Dict[str, asyncio.Task] = {}
         self._stop_requested = False
         self._lock = asyncio.Lock()
@@ -33,7 +29,7 @@ class PipelineCoordinator:
         await self.job_monitor.start()
 
     @asynccontextmanager
-    async def _pipeline_context(self, pipeline: PolygonPipeline):  # ... same ...
+    async def _pipeline_context(self, pipeline: PolygonPipeline):
         initialized_ok = False
         try:
             initialized_ok = await pipeline.initialize()
@@ -62,7 +58,7 @@ class PipelineCoordinator:
 
     async def _run_single_pipeline_task(
         self, polygon_id: str, polygon_data: Dict, pipeline_id: str
-    ) -> Dict:  # ... same ...
+    ) -> Dict:
         pipeline: Optional[PolygonPipeline] = None
         task_status = PipelineState.FAILED
         task_result = None
@@ -117,7 +113,7 @@ class PipelineCoordinator:
 
     async def run_multipolygon_pipeline(
         self, multipolygon_data: List[Dict]
-    ) -> List[Dict]:  # ... same ...
+    ) -> List[Dict]:
         if self._stop_requested:
             logging.warning("Coordinator stopped.")
             return []
@@ -179,11 +175,11 @@ class PipelineCoordinator:
                 )
         return final_results
 
-    async def shutdown(self):  # ... same ...
+    async def shutdown(self):
         if self._stop_requested:
-            return
             logging.info("Coordinator shutdown requested.")
             self._stop_requested = True
+            return
         async with self._lock:
             active_tasks = list(self._active_pipeline_tasks.values())
             if active_tasks:

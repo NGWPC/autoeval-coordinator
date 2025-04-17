@@ -1,5 +1,4 @@
 import asyncio
-import aiobotocore.session
 import json
 import logging
 import os
@@ -8,8 +7,9 @@ from contextlib import suppress, AsyncExitStack
 from typing import List, Dict, Any, Optional
 
 import aiohttp
+from pydantic import ValidationError
 
-from config_models import load_config, AppConfig
+from load_config import load_config, AppConfig
 from coordinator import PipelineCoordinator
 from pipeline import PipelineState
 
@@ -32,7 +32,6 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
 
     async with AsyncExitStack() as stack:
         # --- Setup aiohttp session with defaults ---
-        # Use the connection limit directly from the validated config
         connector = aiohttp.TCPConnector(limit=config.defaults.http_connection_limit)
         http_session = await stack.enter_async_context(
             aiohttp.ClientSession(timeout=DEFAULT_AIOHTTP_TIMEOUT, connector=connector)
@@ -42,21 +41,8 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
             f"conn_limit={config.defaults.http_connection_limit})."
         )
 
-        # --- Setup aiobotocore S3 client ---
-        s3_botocore_session = aiobotocore.session.get_session()
-        s3_client = await stack.enter_async_context(
-            s3_botocore_session.create_client(
-                "s3",
-                region_name=os.environ.get("AWS_REGION"),
-            )
-        )
-        s3_endpoint_info = (
-            f" on endpoint {config.s3.endpoint_url}" if config.s3.endpoint_url else ""
-        )
-        logging.info(f"aiobotocore S3 client created{s3_endpoint_info}.")
-
         # --- Initialize Coordinator with clients/sessions ---
-        coordinator = PipelineCoordinator(config, http_session, s3_client)
+        coordinator = PipelineCoordinator(config, http_session)
 
         # Use the passed data
         polygons_to_process = multipolygon_data
@@ -66,6 +52,7 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
                 logging.warning(
                     "No polygons provided to process. Exiting run_main early."
                 )
+                return
 
             logging.info(
                 f"Running pipelines for {len(polygons_to_process)} polygon(s)..."
@@ -75,59 +62,75 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
             )
 
             logging.info("\n--- Pipeline Run Summary ---")
-            # Initialize counters
+            # Initialize counters using PipelineState enum members
+            # Add specific counters for outcomes not directly in PipelineState
             status_counts = {state: 0 for state in PipelineState}
-            status_counts["CANCELLED"] = 0  # Add specific counter for cancellations
-            status_counts["UNKNOWN_ERROR"] = 0  # Counter for non-pipeline state errors
+            status_counts["CANCELLED"] = 0  # Explicitly track cancellations
+            status_counts["INVALID_STATUS"] = 0  # Track cases with bad status values
 
             for result in all_pipeline_results:
                 pipeline_id = result.get("pipeline_id", "N/A")
                 polygon_id = result.get("polygon_id", "N/A")
-                status = result.get(
-                    "status", PipelineState.FAILED
-                )  # Default if missing
+                status = result.get("status")  # Get status (might be None or invalid)
                 error = result.get("error")
                 result_data = result.get("result")
 
+                log_status_str = "UNKNOWN"  # Default log string
                 error_info = ""
-                log_status = status
 
                 if isinstance(error, asyncio.CancelledError):
                     error_info = " Error: Task Cancelled"
                     status_counts["CANCELLED"] += 1
-                    log_status = "CANCELLED"  # For logging clarity
+                    log_status_str = "CANCELLED"
+
                 elif isinstance(error, BaseException):
                     error_info = f" Error: {type(error).__name__}: {error}"
-                    # Count as FAILED if an exception occurred, even if status isn't set
-                    if status != PipelineState.FAILED:
-                        logging.warning(
-                            f"Pipeline {pipeline_id} had error but status was {status}. Counting as FAILED."
-                        )
-                        status = PipelineState.FAILED  # Ensure consistency
                     status_counts[PipelineState.FAILED] += 1
-                    log_status = PipelineState.FAILED.value
-                elif isinstance(status, PipelineState):
-                    status_counts[status] += 1
-                    log_status = status.value
-                else:
-                    # Should ideally not happen if status is always PipelineState or error is set
-                    logging.error(
-                        f"Pipeline {pipeline_id} finished with unexpected status type: {type(status)} ({status})"
-                    )
-                    status_counts["UNKNOWN_ERROR"] += 1
-                    log_status = f"UNKNOWN ({status})"
+                    log_status_str = PipelineState.FAILED.value
+                    # Log a warning if the reported status wasn't FAILED
+                    if (
+                        isinstance(status, PipelineState)
+                        and status != PipelineState.FAILED
+                    ):
+                        logging.warning(
+                            f"Pipeline {pipeline_id} had error '{error_info}' but reported status was {status.value}. Final outcome counted as FAILED."
+                        )
+                    # Ensure status reflects failure if error occurred
+                    status = PipelineState.FAILED
 
+                elif isinstance(status, PipelineState):
+                    # No error, and status is a valid PipelineState enum member
+                    status_counts[status] += 1
+                    log_status_str = status.value
+
+                else:
+                    # No error reported, but the status is not a valid PipelineState
+                    logging.error(
+                        f"Pipeline {pipeline_id} finished with unexpected status type: {type(status)} ({status}) and no reported error."
+                    )
+                    status_counts["INVALID_STATUS"] += 1
+                    log_status_str = f"INVALID_STATUS ({status})"
+
+                # Log the individual pipeline outcome
                 logging.info(
-                    f"Pipeline {pipeline_id} (Poly: {polygon_id}): {log_status}. "
+                    f"Pipeline {pipeline_id} (Poly: {polygon_id}): Final outcome/state: {log_status_str}. "
                     f"Result: {result_data}.{error_info}"
                 )
 
-            # Log summary from counts
-            summary_parts = [
-                f"{count} {state.value if isinstance(state, PipelineState) else state}"
-                for state, count in status_counts.items()
-                if count > 0
-            ]
+            # --- Log summary from counts ---
+            summary_parts = []
+            # Iterate through the collected counts
+            for state, count in status_counts.items():
+                if count > 0:
+                    # Get the string representation for the summary key
+                    state_name = (
+                        state.value if isinstance(state, PipelineState) else str(state)
+                    )
+                    summary_parts.append(f"{count} {state_name}")
+
+            # Check if specific states like FAILED, CANCELLED etc. had zero count but should be mentioned if non-zero
+            # (The loop above already handles this correctly by checking count > 0)
+
             logging.info(
                 f"\nSummary: {', '.join(summary_parts) or 'No pipelines run'}."
             )
@@ -158,10 +161,8 @@ if __name__ == "__main__":
     )
 
     # --- Set log levels ---
-    logging.getLogger("aiobotocore").setLevel(logging.WARNING)
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("s3transfer").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
 
     # --- Load Config and Required Data Files ---

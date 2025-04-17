@@ -1,4 +1,3 @@
-# data_service.py
 import asyncio
 import json
 import logging
@@ -7,7 +6,7 @@ from typing import Dict
 from contextlib import suppress
 import smart_open  # Import smart_open
 
-from config_models import AppConfig
+from load_config import AppConfig
 
 
 class DataService:
@@ -15,13 +14,12 @@ class DataService:
 
     def __init__(self, config: AppConfig):
         self.config = config
-        self.mock_data_path = config.data_paths.mock_catchment_data
+        self.mock_data_path = config.mock_data_paths.mock_catchment_data
         self._cached_data = None
         # Optional: configure transport params for smart_open if needed
         self._transport_params = None  # E.g. config.s3.transport_params
 
     async def _load_mock_data(self) -> Dict:
-        # (Implementation remains the same)
         if self._cached_data:
             return self._cached_data
         logging.info(f"Loading mock catchment data from: {self.mock_data_path}")
@@ -40,7 +38,6 @@ class DataService:
 
     async def query_for_catchments(self, polygon_data: Dict) -> Dict:
         """Returns the loaded mock catchment data."""
-        # (Implementation remains the same)
         logging.info(
             f"Data service query for polygon {polygon_data.get('id', 'N/A')}..."
         )
@@ -70,26 +67,6 @@ class DataService:
 
     def _sync_write_json(self, data: Dict, uri: str):
         """Synchronous helper for writing JSON using smart_open."""
-        # Define transport_params if needed for S3 authentication/region
-        # transport_params = {'profile_name': 'my-aws-profile'} # Example
         transport_params = self._transport_params
         with smart_open.open(uri, "w", transport_params=transport_params) as f:
             json.dump(data, f, indent=2)
-
-    # Keep simulation method if needed for testing without S3 access
-    async def _simulate_s3_upload(self, local_path: str, s3_uri: str):
-        """Mock uploading a file to S3."""
-        logging.debug(f"SIMULATING UPLOAD: {local_path} -> {s3_uri}")
-        await asyncio.sleep(0.01)
-        temp_base_dir = os.path.join(os.getcwd(), "temp_pipeline_data")
-        try:
-            if os.path.exists(local_path) and os.path.commonpath(
-                [os.path.abspath(local_path), os.path.abspath(temp_base_dir)]
-            ) == os.path.abspath(temp_base_dir):
-                os.remove(local_path)
-            elif os.path.exists(local_path):
-                logging.warning(
-                    f"Attempted to delete file outside temp dir during simulation: {local_path}"
-                )
-        except OSError as e:
-            logging.warning(f"Could not remove temp file {local_path}: {e}")

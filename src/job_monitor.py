@@ -2,12 +2,9 @@ import asyncio
 import logging
 from typing import Dict, Optional
 from contextlib import suppress
-import aiohttp  # For exception types
+import aiohttp
 
-# Use models and components from other modules
 from nomad_api import NomadApiClient
-
-# No custom exceptions imported
 
 
 class NomadJobMonitor:
@@ -24,7 +21,6 @@ class NomadJobMonitor:
 
     async def start(self):
         """Starts the background monitoring task."""
-        # (Implementation remains the same)
         async with self._lock:
             if self._active and (
                 self._monitor_task is None or self._monitor_task.done()
@@ -37,7 +33,6 @@ class NomadJobMonitor:
 
     async def stop(self):
         """Stops the background monitoring task and cancels pending futures."""
-        # (Implementation remains the same)
         async with self._lock:
             if not self._active:
                 return
@@ -53,12 +48,12 @@ class NomadJobMonitor:
                     with suppress(asyncio.CancelledError):
                         await self._monitor_task
             pending_futures = []
-            for job_id, future in self._job_futures.items():
+            for job_id, future in list(self._job_futures.items()):
                 if not future.done():
                     logging.warning(
                         f"Cancelling pending future for job {job_id} due to monitor stop."
                     )
-                    future.cancel("Monitor stopping")
+                    future.set_exception(RuntimeError("Monitor stopping"))
                     pending_futures.append(job_id)
             self._job_futures.clear()
             self._future_metadata.clear()
@@ -66,7 +61,6 @@ class NomadJobMonitor:
 
     async def track_job(self, dispatched_job_id: str, meta: Dict) -> asyncio.Future:
         """Registers a job ID to be monitored, returning a Future for its completion."""
-        # (Implementation remains the same)
         if not dispatched_job_id:
             raise ValueError("dispatched_job_id cannot be empty")
         if not self._active:
@@ -81,27 +75,36 @@ class NomadJobMonitor:
                 future = asyncio.get_running_loop().create_future()
                 self._job_futures[dispatched_job_id] = future
                 self._future_metadata[dispatched_job_id] = meta
-                logging.info(f"Tracking job {dispatched_job_id}")
+                logging.info(f"Tracking job {dispatched_job_id} with meta: {meta}")
                 return future
 
     def _extract_relevant_info(self, event: Dict) -> Optional[Dict]:
         """Parses Nomad event (primarily AllocationUpdate) for job status."""
-        # (Implementation remains the same)
         event_type = event.get("Type")
         payload = event.get("Payload", {})
+
         if event_type == "AllocationUpdate":
             alloc = payload.get("Allocation")
-            job = alloc.get("Job", {}) if alloc else {}
             if not alloc:
+                logging.debug("AllocationUpdate event missing Allocation payload")
                 return None
+
+            job = alloc.get("Job", {})
             job_id = alloc.get("JobID")
-            meta = job.get("Meta")
+            if not job_id:
+                logging.debug("AllocationUpdate event missing JobID in Allocation")
+                return None
+
+            # Get metadata from the Job spec within the Allocation event, if available
+            event_meta = job.get("Meta") if job else None
+
             client_status = alloc.get("ClientStatus")
             task_states = alloc.get("TaskStates", {})
             failed = False
-            all_tasks_terminal = len(task_states) > 0
-            exit_code = None
-            for state in task_states.values():
+            all_tasks_terminal = len(task_states) > 0 # Assume terminal if tasks exist
+            exit_code = None # Overall job exit code (usually from main task)
+
+            for task_name, state in task_states.items():
                 task_state = state.get("State")
                 if task_state not in ["dead", "complete"]:
                     all_tasks_terminal = False
@@ -109,30 +112,43 @@ class NomadJobMonitor:
                 if state.get("Failed", False):
                     failed = True
                 task_events = state.get("Events", [])
-                if task_events and task_events[-1].get("Type") == "Terminated":
-                    task_exit_code = task_events[-1].get("ExitCode")
+                term_events = [e for e in task_events if e.get("Type") == "Terminated"]
+                if term_events:
+                    # Get the exit code from the most recent termination event
+                    last_term_event = term_events[-1]
+                    task_exit_code = last_term_event.get("ExitCode")
                     if task_exit_code is not None:
+                        if exit_code is None or task_exit_code != 0:
                         exit_code = task_exit_code
+                        # If the task failed, ensure we mark the job as failed
                         if task_exit_code != 0:
                             failed = True
+                    # Also check the 'Failed' flag directly in case exit code is 0 but task failed
+                    if state.get("Failed", False):
+                         failed = True
+
             status = "unknown"
             if all_tasks_terminal:
                 status = "failed" if failed else "completed"
             elif client_status in ["running", "pending", "starting", "restarting"]:
                 status = client_status
-            output_path = meta.get("expected_output_path") if meta else None
+            else:
+                # Handle other client statuses if necessary, default to client_status
+                status = client_status if client_status else "unknown"
+
+            event_output_path = event_meta.get("output_path") if event_meta else None
+
             return {
                 "job_id": job_id,
-                "meta": meta,
+                "event_meta": event_meta, # Metadata from the event itself
                 "status": status,
-                "output_path": output_path,
+                "event_output_path": event_output_path, # Path from event (for info)
                 "exit_code": exit_code,
             }
         return None
 
     async def _run_monitor(self):
         """Background task listening to events and resolving futures."""
-        # (Implementation remains the same)
         retry_delay = 1
         max_retry_delay = 60
         while not self._stop_event.is_set():
@@ -147,12 +163,21 @@ class NomadJobMonitor:
                     retry_delay = 1
                     async for event in stream_generator:
                         if self._stop_event.is_set():
+                            logging.debug(f"Stop event set, breaking event loop ({task_name})")
                             break
-                        info = self._extract_relevant_info(event)
-                        if info and info.get("job_id"):
-                            await self._process_job_event(info)
+                        try:
+                                info = self._extract_relevant_info(event)
+                                if info and info.get("job_id"):
+                                    await self._process_job_event(info)
+                        except Exception as e:
+                             logging.exception(f"Error processing event ({task_name}): {event}. Error: {e}")
+
                     if self._stop_event.is_set():
-                        break
+                        logging.debug(f"Stop event set after stream ended ({task_name})")
+                        break # Exit while loop if stopped during stream processing
+                    else:
+                         logging.warning(f"Nomad event stream ended unexpectedly ({task_name}).")
+
             except asyncio.CancelledError:
                 logging.info(f"Monitor task ({task_name}) cancelled.")
                 break
@@ -161,7 +186,9 @@ class NomadJobMonitor:
             except Exception:
                 logging.exception(f"Unexpected error in monitor task ({task_name})")
             if self._stop_event.is_set():
-                break
+                logging.debug(f"Stop event set before retry sleep ({task_name})")
+                break # Exit while loop if stopped
+
             logging.info(
                 f"Retrying monitor stream connection in {retry_delay} seconds... ({task_name})"
             )
@@ -184,25 +211,24 @@ class NomadJobMonitor:
                     f"Processing event for tracked job {dispatched_job_id}: status={status}"
                 )
                 if status == "completed":
-                    output_path = (
-                        original_meta.get("expected_output_path")
-                        if original_meta
-                        else None
-                    )
+                    output_path = original_meta.get("output_path") if original_meta else None
+
                     if not output_path:
                         logging.error(
-                            f"Completed job {dispatched_job_id} missing 'expected_output_path' in original meta!"
+                            f"Completed job {dispatched_job_id} missing 'output_path' in original tracked meta! "
+                            f"Original Meta: {original_meta}. Event Info: {event_info}"
                         )
-                        # Use ValueError for missing data configuration issue
+                        # Use ValueError for missing *required configuration* data
                         future.set_exception(
                             ValueError(
-                                f"Output path missing for completed job {dispatched_job_id}"
+                                f"Output path missing in tracked metadata for completed job {dispatched_job_id}"
                             )
                         )
                     else:
-                        logging.info(f"Job {dispatched_job_id} completed successfully.")
+                        logging.info(f"Job {dispatched_job_id} completed successfully. Result: {output_path}")
                         future.set_result(output_path)
-                    # Clean up tracking info for this job
+
+                    # Clean up tracking info once resolved (success or config error)
                     if dispatched_job_id in self._job_futures:
                         del self._job_futures[dispatched_job_id]
                     if dispatched_job_id in self._future_metadata:
@@ -211,10 +237,11 @@ class NomadJobMonitor:
                 elif status == "failed":
                     exit_code = event_info.get("exit_code", "N/A")
                     err_msg = f"Job {dispatched_job_id} failed (exit code: {exit_code})"
-                    logging.error(err_msg)
+                    logging.error(err_msg + f". Event Info: {event_info}")
                     # Use RuntimeError for job execution failures
                     future.set_exception(RuntimeError(err_msg))
-                    # Clean up tracking info
+
+                    # Clean up tracking info for failed jobs
                     if dispatched_job_id in self._job_futures:
                         del self._job_futures[dispatched_job_id]
                     if dispatched_job_id in self._future_metadata:

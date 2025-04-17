@@ -25,11 +25,8 @@ class JobNames(BaseModel):
 
 
 class S3Config(BaseModel):
-    bucket: str = Field(..., min_length=3, examples=["your-single-fim-data-bucket"])
+    bucket: str = Field(..., min_length=3, examples=["your-fim-data-bucket"])
     base_prefix: str = "pipeline-runs"
-    endpoint_url: Optional[AnyHttpUrl] = Field(
-        None, examples=["http://localhost:9000"]
-    )  # For MinIO, Localstack etc
     # Optional: Add transport_params for smart_open/aiobotocore if needed
     # e.g., region_name, profile_name for specific AWS config
     transport_params: Optional[Dict[str, Any]] = None
@@ -38,7 +35,7 @@ class S3Config(BaseModel):
 class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
     polygon_data_file: str = "mock_polygons.json"  # Path to polygon data
-    forecast_csv_template: str = "forecasts/{region}/forecast_{polygon_id}.csv"
+    forecast_csv: str = "forecasts/{region}/forecast_{polygon_id}.csv"
 
 
 class Defaults(BaseModel):
@@ -46,7 +43,6 @@ class Defaults(BaseModel):
     geo_mem_cache_mosaicker: int = Field(256, gt=0)
     fim_type: Literal["extent", "depth"] = "extent"
     mosaic_resolution: float = Field(10.0, gt=0)
-    window_size: int = Field(2, ge=1)
     # Added http_connection_limit based on review
     http_connection_limit: int = Field(
         10, gt=0, description="Max concurrent outgoing HTTP connections"

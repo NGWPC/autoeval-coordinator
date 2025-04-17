@@ -1,4 +1,3 @@
-# pipeline.py
 import asyncio
 import json
 import logging
@@ -7,15 +6,14 @@ from enum import Enum
 from typing import Dict, Optional, Any, List
 from contextlib import suppress
 
-# Use models and components from other modules
-from config_models import AppConfig
+from load_config import AppConfig
 from nomad_api import NomadApiClient
 from job_monitor import NomadJobMonitor
 from data_service import DataService
-import pipeline_parameters
+import pipeline_params
 
 
-class PipelineState(Enum):  # ... same ...
+class PipelineState(Enum):
     INITIALIZING = "init"
     DISPATCHING_INUNDATORS = "dispatch_inund"
     AWAITING_INUNDATORS = "await_inund"
@@ -28,7 +26,6 @@ class PipelineState(Enum):  # ... same ...
 class PolygonPipeline:
     """Orchestrates the steps for processing a single polygon."""
 
-    # (__init__, initialize - same)
     def __init__(
         self,
         polygon_id: str,
@@ -38,7 +35,7 @@ class PolygonPipeline:
         nomad_client: NomadApiClient,
         data_service: DataService,
         job_monitor: NomadJobMonitor,
-    ):  # ... same ...
+    ):
         self.polygon_id = polygon_id
         self.pipeline_id = pipeline_id
         self.instance_id = f"{pipeline_id}-{polygon_id}"
@@ -57,7 +54,7 @@ class PolygonPipeline:
             f"Pipeline {self.pipeline_id} created for polygon {self.polygon_id}"
         )
 
-    async def initialize(self) -> bool:  # ... same ...
+    async def initialize(self) -> bool:
         self.state = PipelineState.INITIALIZING
         logging.info(f"[{self.pipeline_id}] Initializing...")
         try:
@@ -66,7 +63,6 @@ class PolygonPipeline:
             self.hand_version = full_data.get("hand_version")
             if not self.catchment_data:
                 raise ValueError("No catchments found for polygon.")
-            # Temp dir might still be useful for logs or intermediate *local* files if needed
             self.temp_dir = os.path.join(
                 os.getcwd(), "temp_pipeline_data", self.pipeline_id
             )
@@ -113,16 +109,15 @@ class PolygonPipeline:
             # Prepare parameters and create write/dispatch coroutines
             for catchment_id, c_info in self.catchment_data.items():
                 try:
-                    # Parameter module now returns local_path, content, meta
                     _, json_content, dispatch_meta = (
-                        pipeline_parameters.prepare_inundator_dispatch_info(
+                        pipeline_params.prepare_inundator_dispatch_info(
                             self.config,
                             self.pipeline_id,
                             self.polygon_id,
                             self.polygon_data,
                             catchment_id,
                             c_info,
-                            self.hand_version,  # Pass temp_dir base if needed by util
+                            self.hand_version,
                         )
                     )
                     prepared_params_meta.append((catchment_id, dispatch_meta))
@@ -206,7 +201,6 @@ class PolygonPipeline:
 
             # --- Step 2: Await Inundators ---
             self.state = PipelineState.AWAITING_INUNDATORS
-            # (Await logic remains the same)
             inundator_results = await asyncio.gather(
                 *inundator_futures.values(), return_exceptions=True
             )
@@ -256,7 +250,7 @@ class PolygonPipeline:
             self.state = PipelineState.DISPATCHING_MOSAICKER
             # (Dispatch logic remains the same - uses pipeline_parameters)
             logging.info(f"[{self.pipeline_id}] Dispatching mosaicker job.")
-            mosaicker_meta = pipeline_parameters.prepare_mosaicker_dispatch_meta(
+            mosaicker_meta = pipeline_params.prepare_mosaicker_dispatch_meta(
                 self.config,
                 self.pipeline_id,
                 self.polygon_id,
