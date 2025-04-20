@@ -118,15 +118,11 @@ class PipelineCoordinator:
             pipeline_tasks = []
             task_to_pipeline_id = {}
             for poly_data in multipolygon_data:
-                poly_id = poly_data.get("id")
-                if not poly_id:
-                    logging.warning(f"Skipping polygon data missing 'id': {poly_data}")
-                    continue
                 if self._stop_requested:
                     break
                 pipeline_id = str(uuid.uuid4())
                 pipeline_task = asyncio.create_task(
-                    self._run_single_pipeline_task(poly_id, poly_data, pipeline_id),
+                    self._run_single_pipeline_task(poly_data, pipeline_id),
                     name=f"PipelineTask-{pipeline_id}",
                 )
                 self._active_pipeline_tasks[pipeline_id] = pipeline_task
