@@ -74,7 +74,7 @@ def prepare_inundator_dispatch_info(
         f"Preparing inundator dispatch metadata for pipeline={pipeline_id}, catchment={catchment_id}"
     )
 
-    # --- 1. Determine S3 Path for the Input JSON (pipeline writes here) ---
+    # --- Determine S3 Path for the Input JSON (pipeline writes here) ---
     # This path MUST match the path calculated and used by the pipeline's write step.
     input_json_s3_path = generate_s3_path(
         config,
@@ -84,7 +84,7 @@ def prepare_inundator_dispatch_info(
         is_input=True,
     )
 
-    # --- 2. Determine Job Output Path (job writes here) ---
+    # --- Determine Job Output Path (job writes here) ---
     output_fim_s3_path = generate_s3_path(
         config,
         pipeline_id,
@@ -93,15 +93,17 @@ def prepare_inundator_dispatch_info(
         is_input=False,
     )
 
-    # --- 3. Assemble Dispatch Metadata ---
+    # --- Assemble Dispatch Metadata ---
     # This metadata tells the job where to find its input JSON and where to write its output
     dispatch_meta = {
         "pipeline_id": pipeline_id,
         "catchment_data_path": input_json_s3_path,  # Path to the JSON the pipeline writes
-        "forecast_path": f"s3://{config.s3.bucket}/{config.forecast_csv}",  # Path to the forecast CSV on S3
+        "forecast_path": f"s3://{config.s3.bucket}/{config.mock_data_paths.forecast_csv}",  # Path to the forecast CSV on S3
         "output_path": output_fim_s3_path,
         "fim_type": config.defaults.fim_type,
-        "geo_mem_cache": config.defaults.geo_mem_cache_inundator,
+        "geo_mem_cache": str(config.defaults.geo_mem_cache_inundator),
+        "registry_token": config.nomad.registry_token
+        or "",  # Pass registry token if set
     }
 
     # Return only the stringified metadata
@@ -119,21 +121,23 @@ def prepare_mosaicker_dispatch_meta(
     """
     logging.debug(f"Preparing mosaicker params for pipeline={pipeline_id}")
 
+    # Generate output path based on pipeline ID only for the final mosaic
     final_output_s3_path = generate_s3_path(
         config,
         pipeline_id,
-        # TODO: add job_id and catchment_id here
-        filename=f"{pipeline_id}_mosaic.tif",
+        filename=f"pipeline_{pipeline_id}_HAND_mosaic.tif",
         is_input=False,
     )
 
-    # --- 2. Assemble Dispatch Metadata ---
+    # --- Assemble Dispatch Metadata ---
     dispatch_meta = {
         "pipeline_id": pipeline_id,
         "raster_paths": json.dumps(completed_inundator_outputs),
         "output_path": final_output_s3_path,
         "fim_type": config.defaults.fim_type,
-        "geo_mem_cache": config.defaults.geo_mem_cache_mosaicker,
+        "geo_mem_cache": str(config.defaults.geo_mem_cache_mosaicker),
+        "registry_token": config.nomad.registry_token
+        or "",  # Pass registry token if set
     }
 
     return _stringify_meta(dispatch_meta)

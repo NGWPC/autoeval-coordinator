@@ -2,20 +2,20 @@ nomad:
   address: "http://127.0.0.1:4646" 
   token: null
   namespace: "*"
+  registry_token: "f0d192a4-e43b-65cd-be05-773a4dccfbc1"
 
 jobs:
-  hand_inundator: "hand-inundation-processor" 
-  fim_mosaicker: "fim-mosaic-processor"      
+  hand_inundator: "hand_inundator" 
+  fim_mosaicker: "fim_mosaicker"      
 
 s3:
   bucket: "fimc-data" 
   base_prefix: "pipeline-runs"
 
-# S3 path to the JSON file containing mock catchment data. Would use the s3 config block to construct the full s3 paths in the code
 mock_data_paths:
-  mock_catchment_data: "/mock_data/mock_catchments.json"
-  polygon_data_file: "/mock_data/mock_polygons.json"
-  forecast_csv: "ripple/10yr_cms.csv" 
+  mock_catchment_data: "/mock_data/mock_catchments.json" #relative path to mock_data dir
+  polygon_data_file: "/mock_data/mock_polygons.json" #relative path to mock_data dir
+  forecast_csv: "ripple/10yr_cms.csv" #s3 path
 
 defaults:
   geo_mem_cache_inundator: 512

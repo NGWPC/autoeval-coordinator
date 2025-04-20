@@ -17,6 +17,9 @@ class NomadConfig(BaseModel):
     address: AnyHttpUrl = Field(..., examples=["http://127.0.0.1:4646"])
     token: Optional[str] = None
     namespace: str = "*"
+    registry_token: Optional[str] = Field(
+        None, description="Token for Docker private registry authentication"
+    )
 
 
 class JobNames(BaseModel):

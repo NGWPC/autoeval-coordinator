@@ -1,2 +1,4 @@
 .venv/
 __pycache__/
+pipeline_config.yml
+mock_data/

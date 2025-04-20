@@ -25,9 +25,6 @@ class PipelineCoordinator:
         self._stop_requested = False
         self._lock = asyncio.Lock()
 
-    async def start_monitor(self):
-        await self.job_monitor.start()
-
     @asynccontextmanager
     async def _pipeline_context(self, pipeline: PolygonPipeline):
         initialized_ok = False
@@ -115,7 +112,8 @@ class PipelineCoordinator:
         if self._stop_requested:
             logging.warning("Coordinator stopped.")
             return []
-        await self.start_monitor()
+        await self.job_monitor.start()
+
         async with self._lock:
             pipeline_tasks = []
             task_to_pipeline_id = {}
@@ -182,8 +180,9 @@ class PipelineCoordinator:
                 logging.info(f"Cancelling {len(active_tasks)} active pipeline tasks...")
                 for task in active_tasks:
                     task.cancel()
-                    await asyncio.gather(*active_tasks, return_exceptions=True)
-                    logging.info("Active pipeline tasks cancelled.")
+
+                logging.info("Active pipeline tasks cancelled.")
+                await asyncio.gather(*active_tasks, return_exceptions=True)
             self._active_pipeline_tasks.clear()
         await self.job_monitor.stop()
         # Session closed externally

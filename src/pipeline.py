@@ -83,7 +83,7 @@ class PolygonPipeline:
         Raises exceptions on failure.
         """
         try:
-            # 1. Validate c_info content
+            # Validate c_info content
             if "raster_pair" not in c_info:
                 raise KeyError("Missing 'raster_pair'")
             if "hydrotable_entries" not in c_info:
@@ -101,7 +101,7 @@ class PolygonPipeline:
             # Use c_info directly as content after validation
             json_content_to_write = c_info
 
-            # 2. Determine S3 Path for this JSON --- Corrected Indentation Starts Here
+            # Determine S3 Path for this JSON --- Corrected Indentation Starts Here
             input_json_s3_path = pipeline_params.generate_s3_path(
                 self.config,
                 self.pipeline_id,
@@ -110,7 +110,7 @@ class PolygonPipeline:
                 is_input=True,
             )
 
-            # 3. Write JSON to S3 (Await completion)
+            # Write JSON to S3 (Await completion)
             logging.debug(
                 f"[{self.pipeline_id}-{catchment_id}] Writing input JSON to {input_json_s3_path}"
             )
@@ -121,7 +121,7 @@ class PolygonPipeline:
                 f"[{self.pipeline_id}-{catchment_id}] Successfully wrote input JSON."
             )
 
-            # 4. Prepare Dispatch Metadata (Now that write is done)
+            # Prepare Dispatch Metadata (Now that write is done)
             dispatch_meta = pipeline_params.prepare_inundator_dispatch_info(
                 self.config,
                 self.pipeline_id,
@@ -134,7 +134,7 @@ class PolygonPipeline:
                 )
                 raise RuntimeError(f"S3 path mismatch for {catchment_id}")
 
-            # 5. Dispatch Job (Await API call response)
+            # Dispatch Job (Await API call response)
             job_name = self.config.jobs.hand_inundator
             instance_prefix = f"inundate-{self.pipeline_id[:8]}-{catchment_id}"
             logging.debug(
@@ -153,7 +153,7 @@ class PolygonPipeline:
                 f"[{self.pipeline_id}-{catchment_id}] Job dispatched: {dispatched_job_id}"
             )
 
-            # 6. Initiate Tracking (Await setup)
+            # Initiate Tracking (Await setup)
             logging.debug(
                 f"[{self.pipeline_id}-{catchment_id}] Initiating tracking for job {dispatched_job_id}"
             )
@@ -196,7 +196,7 @@ class PolygonPipeline:
         dispatched_ids: Dict[str, str] = {}
 
         try:
-            # --- Step 1: Process Catchments Concurrently (Validate -> Write -> Dispatch -> Track Start) ---
+            # Process Catchments Concurrently (Validate -> Write -> Dispatch -> Track Start)
             self.state = PipelineState.DISPATCHING_INUNDATORS
             logging.info(
                 f"[{self.pipeline_id}] Processing {len(self.catchment_data)} catchments concurrently (validate, write, dispatch, start tracking)..."
@@ -211,7 +211,7 @@ class PolygonPipeline:
             # Run the processing tasks concurrently
             results = await asyncio.gather(*processing_tasks, return_exceptions=True)
 
-            # --- Process Results of Step 1 ---
+            # --- Process Results ---
             successful_dispatches = 0
             failed_catchments = []
             first_failure_exception: Optional[BaseException] = None
@@ -266,13 +266,13 @@ class PolygonPipeline:
                 f"[{self.pipeline_id}] Successfully dispatched and initiated tracking for {successful_dispatches} inundator jobs."
             )
 
-            # --- Step 2: Await Inundator Job Completion ---
+            # --- Await Inundator Job Completion ---
             self.state = PipelineState.AWAITING_INUNDATORS
             logging.info(
                 f"[{self.pipeline_id}] Awaiting completion of {len(inundator_futures)} inundator jobs..."
             )
 
-            # Await all the futures collected in Step 1
+            # Await all the futures
             job_completion_results = await asyncio.gather(
                 *inundator_futures.values(), return_exceptions=True
             )
@@ -337,7 +337,7 @@ class PolygonPipeline:
                 f"[{self.pipeline_id}] All {len(completed_outputs)} tracked inundator jobs successful."
             )
 
-            # --- Step 3: Dispatch Mosaicker ---
+            # --- Dispatch Mosaicker ---
             self.state = PipelineState.DISPATCHING_MOSAICKER
             logging.info(
                 f"[{self.pipeline_id}] Dispatching mosaicker job with {len(completed_outputs)} inputs."
@@ -378,7 +378,7 @@ class PolygonPipeline:
                 f"[{self.pipeline_id}] Mosaicker job {mosaicker_dispatched_id} tracking initiated. Awaiting completion..."
             )
 
-            # --- Step 4: Await Mosaicker ---
+            # --- Await Mosaicker ---
             self.state = PipelineState.AWAITING_MOSAICKER
             try:
                 mosaicker_result = await mosaicker_future
