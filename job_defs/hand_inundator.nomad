@@ -1,4 +1,4 @@
-job "hand-inundation-processor" {
+job "hand_inundator" {
   datacenters = ["dc1"] 
   type        = "batch"
 

@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import os
-from typing import Dict
+from typing import Dict, Any
 from contextlib import suppress
 import smart_open  # Import smart_open
 
@@ -36,12 +36,29 @@ class DataService:
             logging.error(f"Error reading/parsing {self.mock_data_path}: {e}")
             return {"catchments": {}, "hand_version": "error_read_decode"}
 
-    async def query_for_catchments(self) -> Dict:
-        """Returns the loaded mock catchment data."""
+    async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
+        """
+        Returns catchment data for the given polygon.
+        In this mock implementation, we return the same data regardless of polygon_data.
+
+        Args:
+            polygon_data: Dictionary containing polygon information
+
+        Returns:
+            Dictionary with catchments and hand_version
+        """
+        # Simulate a brief delay as if we're querying a service
         await asyncio.sleep(0.01)
+
+        # Log the polygon data for informational purposes
+        polygon_id = polygon_data.get("polygon_id", "unknown")
+        logging.info(f"Querying catchments for polygon: {polygon_id}")
+
+        # Load the mock data
         data = await self._load_mock_data()
+
         logging.info(
-            f"Data service returning {len(data.get('catchments', {}))} catchments."
+            f"Data service returning {len(data.get('catchments', {}))} catchments for polygon {polygon_id}."
         )
         return data
 

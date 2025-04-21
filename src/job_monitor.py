@@ -101,8 +101,8 @@ class NomadJobMonitor:
             client_status = alloc.get("ClientStatus")
             task_states = alloc.get("TaskStates", {})
             failed = False
-            all_tasks_terminal = len(task_states) > 0 # Assume terminal if tasks exist
-            exit_code = None # Overall job exit code (usually from main task)
+            all_tasks_terminal = len(task_states) > 0  # Assume terminal if tasks exist
+            exit_code = None  # Overall job exit code (usually from main task)
 
             for task_name, state in task_states.items():
                 task_state = state.get("State")
@@ -119,13 +119,13 @@ class NomadJobMonitor:
                     task_exit_code = last_term_event.get("ExitCode")
                     if task_exit_code is not None:
                         if exit_code is None or task_exit_code != 0:
-                        exit_code = task_exit_code
+                            exit_code = task_exit_code
                         # If the task failed, ensure we mark the job as failed
                         if task_exit_code != 0:
                             failed = True
                     # Also check the 'Failed' flag directly in case exit code is 0 but task failed
                     if state.get("Failed", False):
-                         failed = True
+                        failed = True
 
             status = "unknown"
             if all_tasks_terminal:
@@ -140,9 +140,9 @@ class NomadJobMonitor:
 
             return {
                 "job_id": job_id,
-                "event_meta": event_meta, # Metadata from the event itself
+                "event_meta": event_meta,  # Metadata from the event itself
                 "status": status,
-                "event_output_path": event_output_path, # Path from event (for info)
+                "event_output_path": event_output_path,  # Path from event (for info)
                 "exit_code": exit_code,
             }
         return None
@@ -163,20 +163,28 @@ class NomadJobMonitor:
                     retry_delay = 1
                     async for event in stream_generator:
                         if self._stop_event.is_set():
-                            logging.debug(f"Stop event set, breaking event loop ({task_name})")
+                            logging.debug(
+                                f"Stop event set, breaking event loop ({task_name})"
+                            )
                             break
                         try:
-                                info = self._extract_relevant_info(event)
-                                if info and info.get("job_id"):
-                                    await self._process_job_event(info)
+                            info = self._extract_relevant_info(event)
+                            if info and info.get("job_id"):
+                                await self._process_job_event(info)
                         except Exception as e:
-                             logging.exception(f"Error processing event ({task_name}): {event}. Error: {e}")
+                            logging.exception(
+                                f"Error processing event ({task_name}): {event}. Error: {e}"
+                            )
 
                     if self._stop_event.is_set():
-                        logging.debug(f"Stop event set after stream ended ({task_name})")
-                        break # Exit while loop if stopped during stream processing
+                        logging.debug(
+                            f"Stop event set after stream ended ({task_name})"
+                        )
+                        break  # Exit while loop if stopped during stream processing
                     else:
-                         logging.warning(f"Nomad event stream ended unexpectedly ({task_name}).")
+                        logging.warning(
+                            f"Nomad event stream ended unexpectedly ({task_name})."
+                        )
 
             except asyncio.CancelledError:
                 logging.info(f"Monitor task ({task_name}) cancelled.")
@@ -187,7 +195,7 @@ class NomadJobMonitor:
                 logging.exception(f"Unexpected error in monitor task ({task_name})")
             if self._stop_event.is_set():
                 logging.debug(f"Stop event set before retry sleep ({task_name})")
-                break # Exit while loop if stopped
+                break  # Exit while loop if stopped
 
             logging.info(
                 f"Retrying monitor stream connection in {retry_delay} seconds... ({task_name})"
@@ -211,7 +219,9 @@ class NomadJobMonitor:
                     f"Processing event for tracked job {dispatched_job_id}: status={status}"
                 )
                 if status == "completed":
-                    output_path = original_meta.get("output_path") if original_meta else None
+                    output_path = (
+                        original_meta.get("output_path") if original_meta else None
+                    )
 
                     if not output_path:
                         logging.error(
@@ -225,7 +235,9 @@ class NomadJobMonitor:
                             )
                         )
                     else:
-                        logging.info(f"Job {dispatched_job_id} completed successfully. Result: {output_path}")
+                        logging.info(
+                            f"Job {dispatched_job_id} completed successfully. Result: {output_path}"
+                        )
                         future.set_result(output_path)
 
                     # Clean up tracking info once resolved (success or config error)

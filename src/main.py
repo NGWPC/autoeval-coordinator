@@ -167,8 +167,8 @@ if __name__ == "__main__":
     # --- Load Config and Required Data Files ---
     config: Optional[AppConfig] = None
     multipolygon_data: List[Dict[str, Any]] = []
-    config_file_path = os.environ.get("APP_CONFIG_PATH", "config.yaml")
-
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    config_file_path = os.path.join(repo_root, "config", "pipeline_config.yml")
     try:
         # --- Load Configuration ---
         logging.info(f"Loading configuration from: {config_file_path}")

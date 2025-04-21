@@ -4,6 +4,8 @@ from typing import Dict, List, Tuple, Optional
 import logging
 from dataclasses import dataclass, field
 
+from load_config import AppConfig
+
 
 def generate_s3_path(
     config: AppConfig,

@@ -1,4 +1,4 @@
-job "fim_mosaic" {
+job "fim_mosaicker" {
   datacenters = ["dc1"] 
   type        = "batch"
 
