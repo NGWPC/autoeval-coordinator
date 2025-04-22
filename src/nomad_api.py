@@ -183,6 +183,7 @@ class NomadApiClient:
                 logging.info("Nomad event stream connected via API.")
 
                 async def event_generator():
+                    nonlocal response
                     try:
                         async for line in response.content:
                             if self._session.closed:
@@ -193,31 +194,57 @@ class NomadApiClient:
                             line = line.strip()
                             if not line:
                                 continue
+                            if line == b"{}":  # Handle heartbeat explicitly
+                                logging.debug("Received Nomad event stream heartbeat")
+                                continue
                             try:
-                                event_list_wrapper = json.loads(line.decode("utf-8"))
+                                # Directly parse the expected dictionary structure
+                                event_data = json.loads(line.decode("utf-8"))
+                                # Validate the structure before processing
                                 if (
-                                    isinstance(event_list_wrapper, list)
-                                    and event_list_wrapper
+                                    isinstance(event_data, dict)
+                                    and "Index" in event_data
+                                    and "Events" in event_data
                                 ):
-                                    wrapper = event_list_wrapper[0]
-                                    if "Index" in wrapper and "Events" in wrapper:
-                                        self._stream_index = wrapper["Index"]
-                                        if wrapper["Events"]:
-                                            for event in wrapper["Events"]:
-                                                if event:
-                                                    yield event
+                                    self._stream_index = event_data[
+                                        "Index"
+                                    ]  # Update index
+                                    logging.debug(
+                                        f"Received event batch with Index: {self._stream_index}"
+                                    )
+                                    if isinstance(event_data["Events"], list):
+                                        for event in event_data["Events"]:
+                                            if (
+                                                isinstance(event, dict) and event
+                                            ):  # Ensure event is a non-empty dict
+                                                logging.debug(
+                                                    f"Yielding event: {event.get('Topic', 'N/A')}/{event.get('Type', 'N/A')} Key: {event.get('Key', 'N/A')}"
+                                                )
+                                                yield event  # Yield individual events
+                                            else:
+                                                logging.warning(
+                                                    f"Skipping invalid item in Events list: {event}"
+                                                )
                                     else:
-                                        yield event_list_wrapper
+                                        logging.warning(
+                                            f"Received event batch with non-list Events field: {event_data}"
+                                        )
                                 else:
-                                    yield event_list_wrapper
+                                    # Log if the structure is not the expected batch format or heartbeat
+                                    logging.warning(
+                                        f"Received unexpected event stream data structure: {event_data}"
+                                    )
+                                    # Optionally, yield it if you have other handlers, but likely indicates an issue.
+                                    # yield event_data
                             except json.JSONDecodeError:
                                 logging.warning(
-                                    f"Event stream JSON decode error: {line[:100]}"
+                                    f"Event stream JSON decode error for line: {line[:100]}..."
                                 )
                             except Exception as e_gen:
                                 logging.exception(
                                     f"Event stream processing error: {e_gen}"
                                 )
+
                     # Let specific aiohttp errors propagate up
                     except aiohttp.ClientPayloadError as e_payload:
                         logging.error(f"Event stream payload error: {e_payload}")

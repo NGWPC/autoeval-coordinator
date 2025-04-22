@@ -20,6 +20,9 @@ DEFAULT_AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(
     sock_read=60,  # Timeout for reading data from socket
 )
 
+# Define the desired buffer size for the stream reader
+STREAM_READER_BUFFER_SIZE = 2 * 1024 * 1024  # 2 MiB
+
 
 async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
     """Sets up resources, runs the coordinator, and ensures cleanup."""
@@ -34,7 +37,11 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
         # --- Setup aiohttp session with defaults ---
         connector = aiohttp.TCPConnector(limit=config.defaults.http_connection_limit)
         http_session = await stack.enter_async_context(
-            aiohttp.ClientSession(timeout=DEFAULT_AIOHTTP_TIMEOUT, connector=connector)
+            aiohttp.ClientSession(
+                timeout=DEFAULT_AIOHTTP_TIMEOUT,
+                connector=connector,
+                read_bufsize=STREAM_READER_BUFFER_SIZE,
+            )
         )
         logging.info(
             f"aiohttp session created (timeout={DEFAULT_AIOHTTP_TIMEOUT.total}s, "
@@ -152,29 +159,43 @@ async def run_main(config: AppConfig, multipolygon_data: List[Dict[str, Any]]):
 
 
 if __name__ == "__main__":
+    import argparse
+
+    # Set up argument parser
+    parser = argparse.ArgumentParser(
+        description="Run the pipeline with configuration options"
+    )
+    parser.add_argument(
+        "--use-local", action="store_true", help="Use local configuration file"
+    )
+    args = parser.parse_args()
+
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
     logging.basicConfig(
         level=log_level,
         format="%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
     # --- Set log levels ---
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     logging.getLogger("aiohttp.access").setLevel(logging.WARNING)
-
     # --- Load Config and Required Data Files ---
     config: Optional[AppConfig] = None
     multipolygon_data: List[Dict[str, Any]] = []
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    config_file_path = os.path.join(repo_root, "config", "pipeline_config.yml")
+
+    # Determine which config file to use
+    config_file_name = (
+        "local_pipeline_config.yml" if args.use_local else "pipeline_config.yml"
+    )
+    config_file_path = os.path.join(repo_root, "config", config_file_name)
+
     try:
         # --- Load Configuration ---
         logging.info(f"Loading configuration from: {config_file_path}")
         config = load_config(config_file_path)
         logging.info("Configuration loaded successfully.")
-
         # --- Check Mock Catchment Data File (Path from Config) ---
         mock_catchment_file = config.mock_data_paths.mock_catchment_data
         logging.info(f"Checking required file existence: {mock_catchment_file}")
@@ -183,7 +204,6 @@ if __name__ == "__main__":
                 f"Required mock catchment data file not found at path specified in config: '{mock_catchment_file}'"
             )
         logging.info(f"Required file found: {mock_catchment_file}")
-
         # --- Check and Load Polygon Data (Path from Config) ---
         polygon_data_path = config.mock_data_paths.polygon_data_file
         logging.info(f"Checking required file existence: {polygon_data_path}")
@@ -191,7 +211,6 @@ if __name__ == "__main__":
             raise FileNotFoundError(
                 f"Required polygon data file not found at path specified in config: '{polygon_data_path}'"
             )
-
         logging.info(f"Loading polygon data from: {polygon_data_path}")
         with open(polygon_data_path, "r") as f:
             try:
@@ -200,23 +219,18 @@ if __name__ == "__main__":
                 raise ValueError(
                     f"Error decoding JSON from '{polygon_data_path}': {json_err}"
                 ) from json_err
-
         if not isinstance(loaded_data, list):
             raise TypeError(
                 f"Expected a list of polygons in '{polygon_data_path}', but got {type(loaded_data).__name__}"
             )
-
         multipolygon_data = loaded_data
-
         if not multipolygon_data:
             error_message = f"Polygon data file '{polygon_data_path}' was loaded but contained no polygons. Application cannot proceed."
             logging.error(error_message)
             raise ValueError(error_message)
-
         logging.info(
             f"Loaded {len(multipolygon_data)} polygon(s) from '{polygon_data_path}'."
         )
-
     except FileNotFoundError as fnf_err:
         logging.critical(f"Setup failed: Required file not found. {fnf_err}")
         exit(1)
@@ -232,7 +246,6 @@ if __name__ == "__main__":
     except Exception as setup_err:
         logging.critical(f"Fatal setup error: {setup_err}", exc_info=True)
         exit(1)
-
     # --- Run Main Application ---
     logging.info(
         "Configuration and data loaded successfully. Starting main application."
@@ -246,5 +259,4 @@ if __name__ == "__main__":
             f"Unhandled exception during main execution: {main_err}", exc_info=True
         )
         exit(1)
-
     logging.info("Application finished.")

@@ -30,6 +30,10 @@ class JobNames(BaseModel):
 class S3Config(BaseModel):
     bucket: str = Field(..., min_length=3, examples=["your-fim-data-bucket"])
     base_prefix: str = "pipeline-runs"
+    # AWS credentials
+    AWS_ACCESS_KEY_ID: Optional[str] = None
+    AWS_SECRET_ACCESS_KEY: Optional[str] = None
+    AWS_SESSION_TOKEN: Optional[str] = None
     # Optional: Add transport_params for smart_open/aiobotocore if needed
     # e.g., region_name, profile_name for specific AWS config
     transport_params: Optional[Dict[str, Any]] = None

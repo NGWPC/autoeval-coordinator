@@ -106,6 +106,9 @@ def prepare_inundator_dispatch_info(
         "geo_mem_cache": str(config.defaults.geo_mem_cache_inundator),
         "registry_token": config.nomad.registry_token
         or "",  # Pass registry token if set
+        "aws_access_key": config.s3.AWS_ACCESS_KEY_ID or "",
+        "aws_secret_key": config.s3.AWS_SECRET_ACCESS_KEY or "",
+        "aws_session_token": config.s3.AWS_SESSION_TOKEN or "",
     }
 
     # Return only the stringified metadata
@@ -140,6 +143,9 @@ def prepare_mosaicker_dispatch_meta(
         "geo_mem_cache": str(config.defaults.geo_mem_cache_mosaicker),
         "registry_token": config.nomad.registry_token
         or "",  # Pass registry token if set
+        "aws_access_key": config.s3.AWS_ACCESS_KEY_ID or "",
+        "aws_secret_key": config.s3.AWS_SECRET_ACCESS_KEY or "",
+        "aws_session_token": config.s3.AWS_SESSION_TOKEN or "",
     }
 
     return _stringify_meta(dispatch_meta)

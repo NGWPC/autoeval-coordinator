@@ -79,73 +79,195 @@ class NomadJobMonitor:
                 return future
 
     def _extract_relevant_info(self, event: Dict) -> Optional[Dict]:
-        """Parses Nomad event (primarily AllocationUpdate) for job status."""
+        """
+        Parses Nomad AllocationUpdated event for job status, prioritizing ClientStatus.
+        """
         event_type = event.get("Type")
         payload = event.get("Payload", {})
 
-        if event_type == "AllocationUpdate":
-            alloc = payload.get("Allocation")
-            if not alloc:
-                logging.debug("AllocationUpdate event missing Allocation payload")
-                return None
+        if event_type != "AllocationUpdated":
+            return None
 
-            job = alloc.get("Job", {})
-            job_id = alloc.get("JobID")
-            if not job_id:
-                logging.debug("AllocationUpdate event missing JobID in Allocation")
-                return None
+        alloc = payload.get("Allocation")
+        if not alloc:
+            logging.debug("AllocationUpdated event missing Allocation payload")
+            return None
 
-            # Get metadata from the Job spec within the Allocation event, if available
-            event_meta = job.get("Meta") if job else None
+        job_id = alloc.get("JobID")
+        if not job_id:
+            logging.debug("AllocationUpdated event missing JobID in Allocation")
+            return None
 
-            client_status = alloc.get("ClientStatus")
-            task_states = alloc.get("TaskStates", {})
-            failed = False
-            all_tasks_terminal = len(task_states) > 0  # Assume terminal if tasks exist
-            exit_code = None  # Overall job exit code (usually from main task)
+        client_status = alloc.get("ClientStatus")
+        task_states = alloc.get("TaskStates", {})
+
+        status = "unknown"
+        exit_code = None
+        failed = False
+
+        # --- Check definitive ClientStatus values ---
+        if client_status == "complete":
+            status = "completed"
+            failed = False  # Default assumption
+            exit_code = 0  # Default assumption
+
+            # Double-check TaskStates for any failures, even if ClientStatus is complete
+            if task_states:
+                for task_name, state in task_states.items():
+                    task_failed = state.get("Failed", False)
+                    task_exit_code = None
+                    task_events = state.get("Events", [])
+                    term_events = [
+                        e for e in task_events if e.get("Type") == "Terminated"
+                    ]
+                    if term_events:
+                        last_term_event = term_events[-1]
+                        # Attempt to get exit code as int, handle potential string "0"
+                        try:
+                            task_exit_code_str = last_term_event.get("Details", {}).get(
+                                "exit_code"
+                            )
+                            if task_exit_code_str is not None:
+                                task_exit_code = int(task_exit_code_str)
+                            else:
+                                # Fallback if 'exit_code' key missing in Details
+                                task_exit_code = last_term_event.get(
+                                    "ExitCode"
+                                )  # Check root level too
+                        except (ValueError, TypeError):
+                            logging.warning(
+                                f"Job {job_id}: Could not parse exit_code '{task_exit_code_str}' as int for task '{task_name}'."
+                            )
+                            task_exit_code = None  # Treat unparseable as unknown
+
+                    if task_failed or (
+                        task_exit_code is not None and task_exit_code != 0
+                    ):
+                        failed = True
+                        status = "failed"  # Override status if any task failed
+                        exit_code = (
+                            task_exit_code if task_exit_code is not None else -1
+                        )  # Capture non-zero or indicate failure
+                        logging.warning(
+                            f"Job {job_id}: ClientStatus 'complete' but task '{task_name}' indicates failure (Failed: {task_failed}, ExitCode: {task_exit_code}). Setting status to 'failed'."
+                        )
+                        break  # One failed task is enough to mark the job failed
+
+        elif client_status in ["failed", "lost"]:
+            status = "failed"
+            failed = True
+            exit_code = None  # Often unknown in these cases, but try to find one
+            if task_states:
+                for task_name, state in task_states.items():
+                    task_events = state.get("Events", [])
+                    term_events = [
+                        e for e in task_events if e.get("Type") == "Terminated"
+                    ]
+                    if term_events:
+                        last_term_event = term_events[-1]
+                        # Attempt to get exit code as int
+                        try:
+                            task_exit_code_str = last_term_event.get("Details", {}).get(
+                                "exit_code"
+                            )
+                            if task_exit_code_str is not None:
+                                task_exit_code = int(task_exit_code_str)
+                            else:
+                                task_exit_code = last_term_event.get("ExitCode")
+                        except (ValueError, TypeError):
+                            logging.warning(
+                                f"Job {job_id}: Could not parse exit_code '{task_exit_code_str}' as int for failed task '{task_name}'."
+                            )
+                            task_exit_code = None
+
+                        if task_exit_code is not None:
+                            exit_code = (
+                                task_exit_code  # Record the first found exit code
+                            )
+                            break  # Stop checking other tasks
+
+        # --- ClientStatus is ambiguous, check TaskStates ---
+        elif task_states:
+            all_tasks_terminal = True
+            any_task_failed = False
+            final_exit_code = (
+                0  # Default to 0 for success if all terminal and none failed
+            )
 
             for task_name, state in task_states.items():
                 task_state = state.get("State")
+                task_failed_flag = state.get("Failed", False)
+                task_term_exit_code = None
+
                 if task_state not in ["dead", "complete"]:
                     all_tasks_terminal = False
-                    break
-                if state.get("Failed", False):
-                    failed = True
+                    break  # If any task isn't terminal, the whole allocation isn't terminal yet
+
+                # Check for failure condition in this terminal task
                 task_events = state.get("Events", [])
                 term_events = [e for e in task_events if e.get("Type") == "Terminated"]
                 if term_events:
-                    # Get the exit code from the most recent termination event
                     last_term_event = term_events[-1]
-                    task_exit_code = last_term_event.get("ExitCode")
-                    if task_exit_code is not None:
-                        if exit_code is None or task_exit_code != 0:
-                            exit_code = task_exit_code
-                        # If the task failed, ensure we mark the job as failed
-                        if task_exit_code != 0:
-                            failed = True
-                    # Also check the 'Failed' flag directly in case exit code is 0 but task failed
-                    if state.get("Failed", False):
-                        failed = True
+                    # Attempt to get exit code as int
+                    try:
+                        task_exit_code_str = last_term_event.get("Details", {}).get(
+                            "exit_code"
+                        )
+                        if task_exit_code_str is not None:
+                            task_term_exit_code = int(task_exit_code_str)
+                        else:
+                            task_term_exit_code = last_term_event.get("ExitCode")
+                    except (ValueError, TypeError):
+                        logging.warning(
+                            f"Job {job_id}: Could not parse exit_code '{task_exit_code_str}' as int for terminal task '{task_name}'."
+                        )
+                        task_term_exit_code = None
 
-            status = "unknown"
+                if task_failed_flag or (
+                    task_term_exit_code is not None and task_term_exit_code != 0
+                ):
+                    any_task_failed = True
+                    # Capture the first non-zero exit code as the overall exit code
+                    if final_exit_code == 0 and task_term_exit_code is not None:
+                        final_exit_code = task_term_exit_code
+                    elif (
+                        final_exit_code == 0
+                    ):  # Task failed flag but exit code was 0 or missing
+                        final_exit_code = -1  # Indicate failure generically
+
+            # Determine status based on task analysis
             if all_tasks_terminal:
-                status = "failed" if failed else "completed"
-            elif client_status in ["running", "pending", "starting", "restarting"]:
+                if any_task_failed:
+                    status = "failed"
+                    exit_code = final_exit_code
+                else:
+                    status = "completed"
+                    exit_code = 0
+            else:
+                # Not all tasks are terminal, use ClientStatus if it's an active one
+                if client_status in ["running", "pending", "starting", "restarting"]:
+                    status = client_status
+                else:
+                    # Default to unknown if ClientStatus isn't a recognizable active state
+                    status = "unknown"
+                exit_code = None
+
+        # --- Fallback (ClientStatus ambiguous/missing, no TaskStates) ---
+        else:
+            # Use ClientStatus if it's a known active state, otherwise unknown
+            if client_status in ["running", "pending", "starting", "restarting"]:
                 status = client_status
             else:
-                # Handle other client statuses if necessary, default to client_status
-                status = client_status if client_status else "unknown"
+                status = "unknown"  # Default if no other info available
+            exit_code = None
 
-            event_output_path = event_meta.get("output_path") if event_meta else None
-
-            return {
-                "job_id": job_id,
-                "event_meta": event_meta,  # Metadata from the event itself
-                "status": status,
-                "event_output_path": event_output_path,  # Path from event (for info)
-                "exit_code": exit_code,
-            }
-        return None
+        # --- Construct Result ---
+        # Note: event_output_path is removed as the pipeline should use the originally tracked metadata
+        return {
+            "job_id": job_id,
+            "status": status,
+            "exit_code": exit_code,
+        }
 
     async def _run_monitor(self):
         """Background task listening to events and resolving futures."""
