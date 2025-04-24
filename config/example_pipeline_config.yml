@@ -1,0 +1,25 @@
+nomad:
+  address: "http://127.0.0.1:4646" 
+  token: null
+  namespace: "*"
+  registry_token: ""
+
+jobs:
+  hand_inundator: "hand_inundator" 
+  fim_mosaicker: "fim_mosaicker"      
+
+s3:
+  bucket: "fimc-data" 
+  base_prefix: "pipeline-runs"
+
+mock_data_paths:
+  mock_catchment_data: "/home/dylan.lee/autoeval-coordinator/mock_data/huc03130002_handoutput_pretty.json" #local path to mock_data dir
+  polygon_data_file: "/home/dylan.lee/autoeval-coordinator/mock_data/mock_polygons.json" #local path to mock_data dir
+  forecast_csv: "s3://fimc-data/benchmark/ripple_fim_30/nwm_return_period_flows_10_yr_cms.csv" #s3 path to a flowfile with discharge in CMS
+
+defaults:
+  geo_mem_cache_inundator: 512
+  geo_mem_cache_mosaicker: 256
+  fim_type: "extent"
+  mosaic_resolution: 10.0
+  http_connection_limit: 10 
