@@ -2,7 +2,10 @@ import asyncio
 import logging
 import tempfile
 from typing import Any, Dict, List
-
+import argparse
+import json
+import os
+from uuid import uuid4
 from pydantic import BaseModel
 
 from data_service import DataService
@@ -11,7 +14,10 @@ from nomad_service import (
     MosaicDispatchMeta,
     NomadService,
 )
-from load_config import AppConfig
+from load_config import AppConfig, load_config
+import aiohttp
+from nomad_api import NomadApiClient
+from job_monitor import NomadJobMonitor
 
 
 class PolygonPipeline:
@@ -139,3 +145,60 @@ class PolygonPipeline:
         """Remove tempdir."""
         self.tmp.cleanup()
         logging.info("[%s] cleaned up temp files", self.pipeline_id)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
+    parser.add_argument(
+        "polygons_file",
+        help="JSON file containing a list of polygon dicts",
+    )
+    parser.add_argument(
+        "--index",
+        type=int,
+        default=0,
+        help="Which polygon in the list to process",
+    )
+    parser.add_argument(
+        "--config",
+        default=os.path.join("config", "pipeline_config.yml"),
+        help="Path to your YAML config",
+    )
+    args = parser.parse_args()
+
+    logging.basicConfig(
+        level=os.environ.get("LOG_LEVEL", "INFO"),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+    cfg = load_config(args.config)
+    with open(args.polygons_file, "r") as fp:
+        polygons = json.load(fp)
+    if not polygons:
+        raise RuntimeError(f"No polygons found in {args.polygons_file!r}")
+    polygon = polygons[args.index]
+
+    async def _main():
+        timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
+        connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
+        async with aiohttp.ClientSession(
+            timeout=timeout, connector=connector
+        ) as session:
+
+            api = NomadApiClient(cfg, session)
+            monitor = NomadJobMonitor(api)
+            await monitor.start()
+            nomad = NomadService(api, monitor)
+
+            data_svc = DataService(cfg)
+            pid = uuid4().hex
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon, pid)
+
+            try:
+                result = await pipeline.run()
+                print(result.json(indent=2))
+            finally:
+                await pipeline.cleanup()
+                await monitor.stop()
+
+    asyncio.run(_main())
