@@ -22,7 +22,7 @@ from job_monitor import NomadJobMonitor
 
 class PolygonPipeline:
     """
-    Orchestrates one polygon:
+    Orchestrates one polygon pipeline:
       1) Query catchments
       2) For each catchment: write JSON → dispatch inundator → await
       3) Dispatch mosaicker → await
@@ -73,6 +73,7 @@ class PolygonPipeline:
         # 3) Dispatch & await mosaicker
         mosaic_meta = MosaicDispatchMeta(
             pipeline_id=self.pipeline_id,
+            raster_paths=inund_outputs,
             output_path=(
                 f"s3://{self.config.s3.bucket}"
                 f"/{self.config.s3.base_prefix}"

@@ -1,7 +1,7 @@
 import logging
-from typing import Any, Dict
-
-from pydantic import BaseModel
+from typing import Any, Dict, List
+import json
+from pydantic import BaseModel, field_serializer
 
 from nomad_api import NomadApiClient
 from job_monitor import NomadJobMonitor
@@ -32,11 +32,13 @@ class InundationDispatchMeta(DispatchMetaBase):
 
 
 class MosaicDispatchMeta(DispatchMetaBase):
-    """
-    Metadata for the HAND mosaicker job.
-    """
-
+    # this is the new field
+    raster_paths: List[str]
     output_path: str
+
+    @field_serializer("raster_paths", mode="plain")
+    def _ser_raster(self, v: List[str], info):
+        return json.dumps(v)
 
 
 class NomadService:
