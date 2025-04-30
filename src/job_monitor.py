@@ -1,95 +1,105 @@
 import asyncio
 import logging
-from contextlib import suppress
-from typing import Any, Dict, Tuple
+from typing import Any, Dict
 
 from nomad_api import NomadApiClient
 
 
+class JobContext:
+    """
+    Holds two futures per job:
+      - alloc_fut: set once the job hits 'pending' or 'running'
+      - done_fut:  set on 'complete' or 'failed'
+    """
+
+    __slots__ = ("meta", "alloc_fut", "done_fut", "got_alloc")
+
+    def __init__(self, meta: Dict[str, Any]):
+        loop = asyncio.get_running_loop()
+        self.meta = meta
+        self.alloc_fut = loop.create_future()
+        self.done_fut = loop.create_future()
+        self.got_alloc = False
+
+
 class NomadJobMonitor:
     """
-    Listens to Nomad AllocationUpdated events and completes or fails
-    Futures for tracked DispatchedJobIDs.
+    Listens to Nomad AllocationUpdated events and drives the two‐phase futures.
     """
 
     def __init__(self, nomad_client: NomadApiClient):
         self._client = nomad_client
-        # map job_id → (Future[str], dispatch_meta)
-        self._tracked: Dict[str, Tuple[asyncio.Future, Dict[str, Any]]] = {}
+        self._contexts: Dict[str, JobContext] = {}
         self._task: asyncio.Task | None = None
 
     async def start(self):
         if self._task is None or self._task.done():
-            logging.info("Starting Nomad job monitor task...")
-            self._task = asyncio.create_task(self._run(), name="NomadJobMonitorTask")
+            logging.info("Starting NomadJobMonitor loop")
+            self._task = asyncio.create_task(self._run(), name="NomadJobMonitor")
 
     async def stop(self):
         if self._task and not self._task.done():
-            logging.info("Stopping Nomad job monitor...")
+            logging.info("Stopping NomadJobMonitor")
             self._task.cancel()
-            with suppress(asyncio.CancelledError):
+            with asyncio.suppress(asyncio.CancelledError):
                 await self._task
 
-        # fail any still-pending futures
-        for job_id, (fut, _) in list(self._tracked.items()):
-            if not fut.done():
-                fut.set_exception(RuntimeError("NomadJobMonitor stopped"))
-        self._tracked.clear()
+        for jid, ctx in self._contexts.items():
+            if not ctx.alloc_fut.done():
+                ctx.alloc_fut.set_exception(RuntimeError("Monitor stopped"))
+            if not ctx.done_fut.done():
+                ctx.done_fut.set_exception(RuntimeError("Monitor stopped"))
 
-    async def track_job(
-        self, job_id: str, dispatch_meta: Dict[str, Any]
-    ) -> asyncio.Future:
-        """
-        Register a DispatchedJobID for monitoring.
-        Returns a Future[str] that will be set to dispatch_meta["output_path"]
-        or raised on failure.
-        """
-        if job_id in self._tracked:
-            # already tracking
-            return self._tracked[job_id][0]
+        self._contexts.clear()
 
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future = loop.create_future()
-        self._tracked[job_id] = (fut, dispatch_meta)
-        return fut
+    async def track_job(self, job_id: str, meta: Dict[str, Any]) -> JobContext:
+        """
+        Register a DispatchedJobID. Returns a JobContext with:
+          - alloc_fut: timeout for scheduling
+          - done_fut:  waits indefinitely for completion
+        """
+        if job_id in self._contexts:
+            return self._contexts[job_id]
+
+        ctx = JobContext(meta)
+        self._contexts[job_id] = ctx
+        return ctx
 
     async def _run(self):
-        """
-        Pull events from the SSE stream and resolve tracked Futures:
-          - ClientStatus='complete' → success (meta['output_path'])
-          - else → failure
-        """
         try:
             async for event in self._client.events.stream():
                 payload = event.get("Payload", {}) or {}
                 alloc = payload.get("Allocation", {}) or {}
                 jid = alloc.get("JobID")
-                if jid not in self._tracked:
+                if jid not in self._contexts:
                     continue
 
-                fut, meta = self._tracked.pop(jid)
+                ctx = self._contexts[jid]
                 status = alloc.get("ClientStatus", "").lower()
 
+                # PHASE 1: first 'pending' or 'running'
+                if not ctx.got_alloc and status in ("pending", "running"):
+                    ctx.got_alloc = True
+                    if not ctx.alloc_fut.done():
+                        ctx.alloc_fut.set_result(alloc)
+
+                # PHASE 2: terminal
                 if status == "complete":
-                    out = meta.get("output_path")
-                    if isinstance(out, str) and out.startswith("s3://"):
-                        fut.set_result(out)
-                        logging.info("Job %s completed → %s", jid, out)
-                    else:
-                        fut.set_exception(
-                            RuntimeError(
-                                f"Job {jid} completed but no valid output_path in meta"
-                            )
+                    if not ctx.done_fut.done():
+                        output = ctx.meta.get("output_path")
+                        ctx.done_fut.set_result(output)
+                    self._contexts.pop(jid, None)
+
+                elif status in ("failed", "lost", "restart"):
+                    if not ctx.done_fut.done():
+                        ctx.done_fut.set_exception(
+                            RuntimeError(f"Job {jid} failed (status={status})")
                         )
-                else:
-                    fut.set_exception(
-                        RuntimeError(f"Job {jid} failed (ClientStatus={status})")
-                    )
-                    logging.error("Job %s failed (ClientStatus=%s)", jid, status)
+                    self._contexts.pop(jid, None)
 
         except asyncio.CancelledError:
-            logging.info("Nomad job monitor cancelled")
+            logging.info("NomadJobMonitor cancelled")
         except Exception:
-            logging.exception("Unexpected error in Nomad job monitor")
+            logging.exception("NomadJobMonitor encountered an error")
         finally:
-            logging.info("Nomad job monitor exiting")
+            logging.info("NomadJobMonitor exiting")

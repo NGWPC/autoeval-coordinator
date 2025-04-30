@@ -42,12 +42,7 @@ class MosaicDispatchMeta(DispatchMetaBase):
 
 
 class NomadService:
-    """
-    Facade that combines:
-      - NomadApiClient.dispatch_job()
-      - NomadJobMonitor.track_job()
-      - awaiting the Future to completion
-    """
+    ALLOC_TIMEOUT = 60
 
     def __init__(self, api: NomadApiClient, monitor: NomadJobMonitor):
         self.api = api
@@ -57,40 +52,27 @@ class NomadService:
         self,
         job_name: str,
         instance_prefix: str,
-        meta: DispatchMetaBase,
+        meta: Dict[str, Any],
     ) -> str:
-        """
-        Dispatches a parameterized Nomad job, tracks it, and awaits its completion.
-
-        Args:
-          job_name: the Nomad job name (from config.jobs.<...>)
-          instance_prefix: a short unique prefix for this invocation
-          meta:       a Pydantic model containing all dispatch‐meta keys
-
-        Returns:
-          The S3 output_path string from the job on success.
-
-        Raises:
-          RuntimeError or subclasses on dispatch‐ or execution‐failure.
-        """
-        logging.info(
-            "Dispatching Nomad job %r with prefix %r", job_name, instance_prefix
-        )
-        response: Dict[str, Any] = await self.api.dispatch_job(
-            job_name, instance_prefix, meta.model_dump()
-        )
-
-        job_id = response.get("DispatchedJobID")
+        # 1) dispatch
+        logging.info("Dispatching job %r (prefix=%r)", job_name, instance_prefix)
+        resp = await self.api.dispatch_job(job_name, instance_prefix, meta)
+        job_id = resp.get("DispatchedJobID")
         if not job_id:
-            raise RuntimeError(
-                f"Dispatch response missing DispatchedJobID: {response!r}"
-            )
+            raise RuntimeError(f"Missing DispatchedJobID in {resp!r}")
 
-        future = await self.monitor.track_job(job_id, meta.model_dump())
-        output = await future
+        # 2) track & wait for allocation
+        ctx = await self.monitor.track_job(job_id, meta)
+        try:
+            await asyncio.wait_for(ctx.alloc_fut, timeout=self.ALLOC_TIMEOUT)
+            logging.info("Job %s allocated – now waiting for completion", job_id)
+        except asyncio.TimeoutError:
+            raise RuntimeError(f"Job {job_id} not allocated in {self.ALLOC_TIMEOUT}s")
 
+        # 3) await terminal state (no timeout)
+        output = await ctx.done_fut
         if not (isinstance(output, str) and output.startswith("s3://")):
-            raise RuntimeError(f"Unexpected job output for {job_id!r}: {output!r}")
+            raise RuntimeError(f"Unexpected output for {job_id}: {output!r}")
 
-        logging.info("Nomad job %r completed successfully: %s", job_id, output)
+        logging.info("Nomad job %s finished → %s", job_id, output)
         return output
