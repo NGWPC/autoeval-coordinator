@@ -6,7 +6,11 @@ from typing import Any, Dict, List
 from pydantic import BaseModel
 
 from data_service import DataService
-from nomad_service import DispatchMeta, NomadService
+from nomad_service import (
+    InundationDispatchMeta,
+    MosaicDispatchMeta,
+    NomadService,
+)
 from load_config import AppConfig
 
 
@@ -35,7 +39,7 @@ class PolygonPipeline:
         self.data_svc = data_svc
         self.polygon = polygon
         self.pipeline_id = pipeline_id
-        # temp dir auto-cleaned on .cleanup()
+        # temp dir auto‐cleaned on .cleanup()
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
 
         # Filled by initialize()
@@ -61,11 +65,8 @@ class PolygonPipeline:
                 tg.create_task(self._process_catchment(catch_id, info, inund_outputs))
 
         # 3) Dispatch & await mosaicker
-        mosaic_meta = DispatchMeta(
+        mosaic_meta = MosaicDispatchMeta(
             pipeline_id=self.pipeline_id,
-            # for mosaic, these fields are irrelevant
-            catchment_data_path="",
-            forecast_path="",
             output_path=(
                 f"s3://{self.config.s3.bucket}"
                 f"/{self.config.s3.base_prefix}"
@@ -98,13 +99,12 @@ class PolygonPipeline:
         2) dispatch inundator
         3) await its output
         """
-        # Build the paths & meta
         base = (
             f"s3://{self.config.s3.bucket}"
             f"/{self.config.s3.base_prefix}"
             f"/pipeline_{self.pipeline_id}/catchment_{catch_id}"
         )
-        meta = DispatchMeta(
+        meta = InundationDispatchMeta(
             pipeline_id=self.pipeline_id,
             catchment_data_path=f"{base}/catchment_data.json",
             forecast_path=self.config.mock_data_paths.forecast_csv,

@@ -27,15 +27,16 @@ class PipelineCoordinator:
         await self.monitor.start()
         results: List[Dict[str, Any]] = []
 
-        async with asyncio.TaskGroup() as tg:
-            for poly in polygons:
-                pid = uuid4().hex
-                pipeline = PolygonPipeline(
-                    self.config, self.nomad, self.data_svc, poly, pid
-                )
-                tg.create_task(self._run_one(pipeline, results))
-
-        await self.monitor.stop()
+        try:
+            async with asyncio.TaskGroup() as tg:
+                for poly in polygons:
+                    pid = uuid4().hex
+                    pipeline = PolygonPipeline(
+                        self.config, self.nomad, self.data_svc, poly, pid
+                    )
+                    tg.create_task(self._run_one(pipeline, results))
+        finally:
+            await self.monitor.stop()
         return results
 
     async def _run_one(self, pipeline: PolygonPipeline, results: List[Dict]):
