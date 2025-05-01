@@ -12,9 +12,11 @@ from tenacity import (
     wait_fixed,
     retry_if_exception_type,
 )
+from requests.exceptions import RequestException
 from nomad.api.exceptions import (
     URLNotFoundNomadException,
-    APIException as NomadAPIException,
+    BaseNomadException,
+    TimeoutNomadException,
 )
 from load_config import AppConfig
 
@@ -102,17 +104,12 @@ class NomadApiClient:
 
         # Parse the address into host/port/scheme
         parsed = urlparse(str(config.nomad.address))
-        host = parsed.hostname
-        port = parsed.port or (443 if parsed.scheme == "https" else 80)
-        scheme = parsed.scheme
-
-        # Instantiate python-nomad
         self._client = nomad.Nomad(
-            host=host,
-            port=port,
-            scheme=scheme,
-            token=(config.nomad.token or None),
-            namespace=(config.nomad.namespace or None),
+            host=parsed.hostname,
+            port=parsed.port,
+            verify=False,  # False to skip TLS verify
+            token=config.nomad.token or None,
+            namespace=config.nomad.namespace or None,
         )
 
         # SSE events wrapper
@@ -137,7 +134,9 @@ class NomadApiClient:
                 aiohttp.ClientConnectionError,
                 aiohttp.ClientResponseError,
                 asyncio.TimeoutError,
-                ConnectionError,
+                RequestException,  # covers things like ConnectionError, HTTPError
+                TimeoutNomadException,  # raised on r.timeout inside python-nomad
+                BaseNomadException,  # any 4xx/5xx or other API‐side errors
             )
         ),
         reraise=True,
@@ -152,17 +151,21 @@ class NomadApiClient:
 
         def _sync_dispatch():
             try:
-                return self._client.job.dispatch(
-                    job=job_name,
-                    meta=meta,
-                    job_id_prefix=job_prefix,
+                return self._client.job.dispatch_job(
+                    id_=job_name, payload=None, meta=meta, id_prefix_template=job_prefix
                 )
             except URLNotFoundNomadException as e:
+                # 404 → name not found
                 raise LookupError(f"Nomad job '{job_name}' not found") from e
-            except NomadAPIException as e:
-                raise ConnectionError(
+            except TimeoutNomadException as e:
+                # upstream timeout → map to asyncio.TimeoutError so tenacity will retry if enabled
+                raise asyncio.TimeoutError(f"Nomad dispatch timed out: {e}") from e
+            except BaseNomadException as e:
+                # catch all other API‐level faults
+                raise RuntimeError(
                     f"Nomad API error dispatching '{job_name}': {e}"
                 ) from e
+            # any other RequestException (e.g. ConnectionError) will bubble out
 
         logging.info("Dispatching Nomad job %r (prefix=%r)", job_name, job_prefix)
         resp = await asyncio.to_thread(_sync_dispatch)

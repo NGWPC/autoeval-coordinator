@@ -2,6 +2,7 @@ datacenter = "dc1"
 
 client {
   enabled = true
+  node_class = "linux"
 }
 
 plugin "docker" {

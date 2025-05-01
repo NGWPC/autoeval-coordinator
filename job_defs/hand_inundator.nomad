@@ -13,7 +13,7 @@ job "hand_inundator" {
       "catchment_data_path",
       "forecast_path",
       "output_path",
-      "geo_mem_cache",
+      "gdal_cache_max",  
     ]
     meta_optional = [
       "fim_type", 
@@ -48,7 +48,6 @@ job "hand_inundator" {
           "--catchment-data", "${NOMAD_META_catchment_data_path}",
           "--forecast-path", "${NOMAD_META_forecast_path}",
           "--output-path", "${NOMAD_META_output_path}",
-          "--geo-mem-cache", "${NOMAD_META_geo_mem_cache}",
         ]
 
         logging {
@@ -69,6 +68,7 @@ job "hand_inundator" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
+        GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
       }
 
       resources {

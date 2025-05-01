@@ -13,7 +13,7 @@ job "fim_mosaicker" {
       "raster_paths", 
       "output_path",
       "fim_type",
-      "geo_mem_cache",
+      "gdal_cache_max",
     ]
     meta_optional = [
       "registry_token", # Required if using private registry auth below
@@ -47,7 +47,6 @@ job "fim_mosaicker" {
           "--raster_paths", "${NOMAD_META_raster_paths}",
           "--output_path", "${NOMAD_META_output_path}",
           "--fim-type", "${NOMAD_META_fim_type}",
-          "--geo-mem-cache", "${NOMAD_META_geo_mem_cache}",
         ]
 
         logging {
@@ -66,6 +65,7 @@ job "fim_mosaicker" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
+        GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
       }
 
       resources {

@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from typing import Any, Dict
-
+from contextlib import suppress
 from nomad_api import NomadApiClient
 
 
@@ -41,7 +41,7 @@ class NomadJobMonitor:
         if self._task and not self._task.done():
             logging.info("Stopping NomadJobMonitor")
             self._task.cancel()
-            with asyncio.suppress(asyncio.CancelledError):
+            with suppress(asyncio.CancelledError):
                 await self._task
 
         for jid, ctx in self._contexts.items():

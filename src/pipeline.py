@@ -80,17 +80,16 @@ class PolygonPipeline:
                 f"/pipeline_{self.pipeline_id}/HAND_mosaic.tif"
             ),
             fim_type=self.config.defaults.fim_type,
-            geo_mem_cache=str(self.config.defaults.geo_mem_cache_mosaicker),
+            gdal_cache_max=str(self.config.defaults.gdal_cache_max),
             registry_token=self.config.nomad.registry_token or "",
             aws_access_key=self.config.s3.AWS_ACCESS_KEY_ID or "",
             aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
             aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
         )
-
         mosaic_out = await self.nomad.run_job(
             self.config.jobs.fim_mosaicker,
             instance_prefix=f"mosaic-{self.pipeline_id[:8]}",
-            meta=mosaic_meta,
+            meta=mosaic_meta.model_dump(),
         )
 
         return self.Result(pipeline_id=self.pipeline_id, final_output=mosaic_out)
@@ -117,13 +116,12 @@ class PolygonPipeline:
             forecast_path=self.config.mock_data_paths.forecast_csv,
             output_path=f"{base}/inundation_output.tif",
             fim_type=self.config.defaults.fim_type,
-            geo_mem_cache=str(self.config.defaults.geo_mem_cache_inundator),
+            gdal_cache_max=str(self.config.defaults.gdal_cache_max),
             registry_token=self.config.nomad.registry_token or "",
             aws_access_key=self.config.s3.AWS_ACCESS_KEY_ID or "",
             aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
             aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
         )
-
         # a) write JSON
         await self.data_svc.write_json_to_uri(info, meta.catchment_data_path)
         logging.info(
@@ -137,7 +135,7 @@ class PolygonPipeline:
         out = await self.nomad.run_job(
             self.config.jobs.hand_inundator,
             instance_prefix=f"inund-{self.pipeline_id[:8]}-{catch_id}",
-            meta=meta,
+            meta=meta.model_dump(),
         )
         collector.append(out)
         logging.info("[%s/%s] inundator done → %s", self.pipeline_id, catch_id, out)
@@ -151,7 +149,7 @@ class PolygonPipeline:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument(
-        "polygons_file",
+        "--polys",
         help="JSON file containing a list of polygon dicts",
     )
     parser.add_argument(
@@ -173,7 +171,7 @@ if __name__ == "__main__":
     )
 
     cfg = load_config(args.config)
-    with open(args.polygons_file, "r") as fp:
+    with open(args.polys, "r") as fp:
         polygons = json.load(fp)
     if not polygons:
         raise RuntimeError(f"No polygons found in {args.polygons_file!r}")
@@ -192,7 +190,7 @@ if __name__ == "__main__":
             nomad = NomadService(api, monitor)
 
             data_svc = DataService(cfg)
-            pid = uuid4().hex
+            pid = "850"
             pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon, pid)
 
             try:

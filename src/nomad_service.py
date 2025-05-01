@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from typing import Any, Dict, List
 import json
 from pydantic import BaseModel, field_serializer
@@ -14,7 +15,7 @@ class DispatchMetaBase(BaseModel):
 
     pipeline_id: str
     fim_type: str
-    geo_mem_cache: str
+    gdal_cache_max: str
     registry_token: str
     aws_access_key: str
     aws_secret_key: str
