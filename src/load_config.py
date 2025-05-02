@@ -46,11 +46,11 @@ class MockDataPaths(BaseModel):
 
 
 class Defaults(BaseModel):
-    geo_mem_cache_inundator: int = Field(512, gt=0)
-    geo_mem_cache_mosaicker: int = Field(256, gt=0)
+    gdal_cache_max: int = Field(
+        512, gt=0, description="GDAL cache size in MB for all jobs"
+    )
     fim_type: Literal["extent", "depth"] = "extent"
-    mosaic_resolution: float = Field(10.0, gt=0)
-    # Added http_connection_limit based on review
+    # Removed geo_mem_cache_inundator, geo_mem_cache_mosaicker, and mosaic_resolution
     http_connection_limit: int = Field(
         10, gt=0, description="Max concurrent outgoing HTTP connections"
     )

@@ -13,7 +13,7 @@ job "hand_inundator" {
       "catchment_data_path",
       "forecast_path",
       "output_path",
-      "geo_mem_cache",
+      "gdal_cache_max",  
     ]
     meta_optional = [
       "fim_type", 
@@ -44,22 +44,12 @@ job "hand_inundator" {
         }
         command = "python3"
         args = [
-          "/app/hand_inundator/inundate.py",
+          "/deploy/hand_inundator/inundate.py",
           "--catchment-data", "${NOMAD_META_catchment_data_path}",
           "--forecast-path", "${NOMAD_META_forecast_path}",
           "--output-path", "${NOMAD_META_output_path}",
-          "--geo-mem-cache", "${NOMAD_META_geo_mem_cache}",
         ]
 
-        logging {
-          type = "awslogs" # Assumes AWS Logs driver setup on clients
-          config {
-            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
-            awslogs-region       = "us-east-1"
-            awslogs-stream       = "${NOMAD_JOB_ID}"
-            awslogs-create-group = "true"
-          }
-        }
       }
 
       # --- Environment Variables (for AWS SDK inside container) ---
@@ -69,6 +59,7 @@ job "hand_inundator" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
+        GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
       }
 
       resources {

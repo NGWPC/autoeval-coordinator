@@ -1,280 +1,176 @@
-import logging
-import json
-from typing import Dict, Optional, AsyncGenerator
-from contextlib import asynccontextmanager, suppress
 import asyncio
+import json
+import logging
+from urllib.parse import urlparse
+from typing import Dict, Any
+
 import aiohttp
+import nomad  # python-nomad client
 from tenacity import (
     retry,
     stop_after_attempt,
     wait_fixed,
     retry_if_exception_type,
-    RetryError,
 )
-
+from requests.exceptions import RequestException
+from nomad.api.exceptions import (
+    URLNotFoundNomadException,
+    BaseNomadException,
+    TimeoutNomadException,
+)
 from load_config import AppConfig
 
-# Define which exceptions tenacity should retry on
-NOMAD_RETRYABLE_EXCEPTIONS = (
-    aiohttp.ClientConnectionError,  # Network issues
-    aiohttp.ClientResponseError,  # Server-side errors (5xx)
-    asyncio.TimeoutError,  # Request timeouts
-    ConnectionError,  # Generic connection errors
-)
 
-
-# Custom retry logic for ClientResponseError (only retry 5xx)
-def retry_if_nomad_server_error(exception):
-    if isinstance(exception, aiohttp.ClientResponseError):
-        return 500 <= exception.status < 600  # Retry only on 5xx errors
-    return isinstance(exception, NOMAD_RETRYABLE_EXCEPTIONS)
-
-
-class NomadApiClient:
-    """Interacts with the Nomad HTTP API using aiohttp, with retries."""
+class EventsWrapper:
+    """
+    Async generator over Nomad's /v1/event/stream SSE endpoint,
+    auto-reconnecting on network blips.
+    """
 
     def __init__(
-        self, config: AppConfig, session: aiohttp.ClientSession
-    ):  # Accept session
-        self.base_url = str(config.nomad.address).rstrip("/")
-        self.namespace = config.nomad.namespace
-        self._headers = {"Content-Type": "application/json"}
-        if config.nomad.token:
-            self._headers["X-Nomad-Token"] = config.nomad.token
-        self._session = session  # Use the passed-in session
-        self.events = self.EventsWrapper(
-            self._session, self.base_url, self.namespace, self._headers
-        )
-        self.config = config
+        self,
+        session: aiohttp.ClientSession,
+        base_url: str,
+        namespace: str,
+        headers: Dict[str, str],
+    ):
+        self._session = session
+        self._base_url = base_url.rstrip("/")
+        self._namespace = namespace
+        self._headers = headers
+        self._index = 0
 
-    async def close(self):
-        # Session is managed externally, so this method does nothing now.
-        logging.debug("NomadApiClient close called (session managed externally).")
-        pass
+    async def stream(self, topics: Dict[str, Any] = None):
+        """
+        Yields individual event dicts, reconnecting on errors
+        and resuming from last index.
+        """
+        if topics is None:
+            topics = {"Allocation": ["*"], "Job": ["*"]}
 
-    # Apply tenacity retry decorator
-    @retry(
-        stop=stop_after_attempt(3),  # Retry up to 3 times (1 initial + 2 retries)
-        wait=wait_fixed(2),  # Wait 2 seconds between retries
-        retry=retry_if_nomad_server_error,  # Custom retry condition
-        reraise=True,  # Reraise the exception after retries exhausted
-    )
-    async def dispatch_job(
-        self, job_name: str, job_instance_id: str, meta: Dict
-    ) -> Dict:
-        """Dispatches a pre-registered parameterized job with retries."""
-        url = f"{self.base_url}/v1/job/{job_name}/dispatch"
-        params = (
-            {"namespace": self.namespace}
-            if self.namespace and self.namespace != "*"
-            else {}
-        )
-        payload = {"Meta": meta, "JobIDPrefix": job_instance_id}
-        logging.info(f"Dispatching job '{job_name}' (prefix: {job_instance_id})")
-        logging.debug(f"Dispatch Meta: {meta}")
-        response: Optional[aiohttp.ClientResponse] = None
-        try:
-            # Use a reasonable timeout for the API call itself
-            async with self._session.post(
-                url, json=payload, params=params, headers=self._headers, timeout=30
-            ) as response:
-                # Check status before parsing JSON
-                if response.status >= 400:
-                    # Log specific error but let raise_for_status handle retry/reraise logic
-                    logging.warning(
-                        f"Nomad API response status {response.status} for dispatch '{job_name}'."
-                    )
-                    response.raise_for_status()  # Let tenacity handle retry based on status via retry_if_nomad_server_error
-
-                response_data = await response.json()
-                logging.debug(f"Nomad Dispatch Response Body: {response_data}")
-                dispatched_id = response_data.get("DispatchedJobID")
-                if not dispatched_id:
-                    raise ValueError(
-                        f"Dispatch response for {job_name} missing DispatchedJobID"
-                    )
-                logging.info(
-                    f"Job '{job_name}' dispatched. EvalID: {response_data.get('EvalID')}, DispatchedJobID: {dispatched_id}"
-                )
-                return response_data
-        except RetryError as e:
-            # Logged when retries are exhausted
-            logging.error(
-                f"Dispatch failed for job '{job_name}' after multiple retries: {e.last_attempt.exception()}"
-            )
-            raise ConnectionError(
-                f"Failed to dispatch job {job_name} after retries"
-            ) from e.last_attempt.exception()
-        except aiohttp.ClientResponseError as e:
-            status = e.status
-            message = e.message
-            body = ""
-            if response and response.content:
-                with suppress(Exception):
-                    body = await response.text()
-            # Raise more specific standard errors for non-retryable client errors
-            if status == 400:
-                raise ValueError(
-                    f"Nomad bad request dispatching {job_name}: {message}. Body: {body[:200]}"
-                ) from e
-            if status == 401 or status == 403:
-                raise PermissionError(
-                    f"Nomad permission error dispatching {job_name}: {message}"
-                ) from e
-            if status == 404:
-                raise LookupError(f"Nomad job '{job_name}' not found: {message}") from e
-            # If it wasn't retried (e.g., 4xx), raise a ConnectionError or let original propagate
-            logging.error(
-                f"Nomad API error dispatching job '{job_name}' ({status}): {message}. Body: {body[:500]}..."
-            )
-            raise ConnectionError(
-                f"Nomad API error dispatching job {job_name} (status {status})"
-            ) from e
-        except aiohttp.ClientConnectionError as e:
-            logging.error(
-                f"Connection error dispatching job '{job_name}' to Nomad: {e}"
-            )
-            raise ConnectionError(
-                f"Nomad connection error dispatching job {job_name}"
-            ) from e
-        except asyncio.TimeoutError as e:
-            logging.error(f"Timeout dispatching job '{job_name}' to Nomad.")
-            raise TimeoutError(
-                f"Timeout dispatching job {job_name}"
-            ) from e  # Standard TimeoutError
-        except Exception as e:
-            logging.exception(f"Unexpected error dispatching job '{job_name}': {e}")
-            raise RuntimeError(f"Unexpected error dispatching job {job_name}") from e
-
-    class EventsWrapper:
-        def __init__(
-            self,
-            session: aiohttp.ClientSession,
-            base_url: str,
-            namespace: str,
-            headers: dict,
-        ):
-            self._session = session
-            self._base_url = base_url
-            self._namespace = namespace
-            self._headers = headers
-            self._stream_index = 0
-
-        @asynccontextmanager
-        async def stream(self, topics: Dict = None) -> AsyncGenerator[Dict, None]:
-            if topics is None:
-                topics = {"Job": ["*"], "Allocation": ["*"]}
-            url = f"{self._base_url}/v1/event/stream"
-            params = {"index": self._stream_index}
+        backoff = 1
+        while True:
+            params = {"index": self._index}
             if self._namespace and self._namespace != "*":
                 params["namespace"] = self._namespace
+
+            # attach topic filters
             for topic, keys in topics.items():
                 for key in keys:
                     params[f"topic.{topic}"] = key
-            logging.info(
-                f"Connecting to Nomad event stream API: {url} with params: {params}"
-            )
-            response: Optional[aiohttp.ClientResponse] = None
+
             try:
-                response = await self._session.get(
-                    url, params=params, headers=self._headers, timeout=None
+                async with self._session.get(
+                    f"{self._base_url}/v1/event/stream",
+                    params=params,
+                    headers=self._headers,
+                    timeout=None,
+                ) as resp:
+                    resp.raise_for_status()
+                    backoff = 1
+                    async for line in resp.content:
+                        chunk = line.strip()
+                        if not chunk or chunk == b"{}":
+                            continue
+                        batch = json.loads(chunk.decode("utf-8"))
+                        self._index = batch.get("Index", self._index)
+                        for event in batch.get("Events", []):
+                            yield event
+
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                logging.warning(
+                    "SSE stream dropped: %s – reconnecting in %ss", e, backoff
                 )
-                response.raise_for_status()
-                logging.info("Nomad event stream connected via API.")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
 
-                async def event_generator():
-                    nonlocal response
-                    try:
-                        async for line in response.content:
-                            if self._session.closed:
-                                logging.warning(
-                                    "Event stream stopping: Session closed."
-                                )
-                                break
-                            line = line.strip()
-                            if not line:
-                                continue
-                            if line == b"{}":  # Handle heartbeat explicitly
-                                logging.debug("Received Nomad event stream heartbeat")
-                                continue
-                            try:
-                                # Directly parse the expected dictionary structure
-                                event_data = json.loads(line.decode("utf-8"))
-                                # Validate the structure before processing
-                                if (
-                                    isinstance(event_data, dict)
-                                    and "Index" in event_data
-                                    and "Events" in event_data
-                                ):
-                                    self._stream_index = event_data[
-                                        "Index"
-                                    ]  # Update index
-                                    logging.debug(
-                                        f"Received event batch with Index: {self._stream_index}"
-                                    )
-                                    if isinstance(event_data["Events"], list):
-                                        for event in event_data["Events"]:
-                                            if (
-                                                isinstance(event, dict) and event
-                                            ):  # Ensure event is a non-empty dict
-                                                logging.debug(
-                                                    f"Yielding event: {event.get('Topic', 'N/A')}/{event.get('Type', 'N/A')} Key: {event.get('Key', 'N/A')}"
-                                                )
-                                                yield event  # Yield individual events
-                                            else:
-                                                logging.warning(
-                                                    f"Skipping invalid item in Events list: {event}"
-                                                )
-                                    else:
-                                        logging.warning(
-                                            f"Received event batch with non-list Events field: {event_data}"
-                                        )
-                                else:
-                                    # Log if the structure is not the expected batch format or heartbeat
-                                    logging.warning(
-                                        f"Received unexpected event stream data structure: {event_data}"
-                                    )
-                                    # Optionally, yield it if you have other handlers, but likely indicates an issue.
-                                    # yield event_data
-                            except json.JSONDecodeError:
-                                logging.warning(
-                                    f"Event stream JSON decode error for line: {line[:100]}..."
-                                )
-                            except Exception as e_gen:
-                                logging.exception(
-                                    f"Event stream processing error: {e_gen}"
-                                )
+            except asyncio.CancelledError:
+                raise
 
-                    # Let specific aiohttp errors propagate up
-                    except aiohttp.ClientPayloadError as e_payload:
-                        logging.error(f"Event stream payload error: {e_payload}")
-                        raise
-                    except aiohttp.ClientConnectionError as e_conn:
-                        logging.error(f"Event stream connection error: {e_conn}")
-                        raise
-                    except asyncio.CancelledError:
-                        logging.info("Event stream generator cancelled.")
-                        raise
-                    finally:
-                        logging.info("Event stream generator finished.")
+            except Exception:
+                logging.exception("Unexpected error in SSE loop, reconnecting")
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, 30)
 
-                yield event_generator()
-            # Let setup errors propagate up
-            except aiohttp.ClientResponseError as e:
-                logging.error(
-                    f"Failed to connect to event stream ({e.status}): {e.message}"
+
+class NomadApiClient:
+    """
+    Wraps python-nomad for dispatch + aiohttp for SSE event streaming.
+    """
+
+    def __init__(self, config: AppConfig, session: aiohttp.ClientSession):
+        self.config = config
+        self._session = session
+
+        # Parse the address into host/port/scheme
+        parsed = urlparse(str(config.nomad.address))
+        self._client = nomad.Nomad(
+            host=parsed.hostname,
+            port=parsed.port,
+            verify=False,  # False to skip TLS verify
+            token=config.nomad.token or None,
+            namespace=config.nomad.namespace or None,
+        )
+
+        # SSE events wrapper
+        self.events = EventsWrapper(
+            session=self._session,
+            base_url=str(config.nomad.address),
+            namespace=config.nomad.namespace or "*",
+            headers={
+                "Content-Type": "application/json",
+                **({"X-Nomad-Token": config.nomad.token} if config.nomad.token else {}),
+            },
+        )
+
+    async def close(self):
+        logging.debug("NomadApiClient.close() → no‐op")
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(2),
+        retry=retry_if_exception_type(
+            (
+                aiohttp.ClientConnectionError,
+                aiohttp.ClientResponseError,
+                asyncio.TimeoutError,
+                RequestException,  # covers things like ConnectionError, HTTPError
+                TimeoutNomadException,  # raised on r.timeout inside python-nomad
+                BaseNomadException,  # any 4xx/5xx or other API‐side errors
+            )
+        ),
+        reraise=True,
+    )
+    async def dispatch_job(
+        self, job_name: str, job_prefix: str, meta: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Dispatches a parameterized job via python-nomad in a threadpool.
+        Returns the raw response dict which must contain 'DispatchedJobID'.
+        """
+
+        def _sync_dispatch():
+            try:
+                return self._client.job.dispatch_job(
+                    id_=job_name, payload=None, meta=meta, id_prefix_template=job_prefix
                 )
-                raise
-            except aiohttp.ClientError as e:
-                logging.error(f"Network error connecting to event stream: {e}")
-                raise
-            except asyncio.TimeoutError:
-                logging.error("Timeout connecting to Nomad event stream API.")
-                raise
-            except Exception as e:
-                logging.error(f"Unexpected error setting up event stream: {e}")
-                raise
-            finally:
-                logging.info("Nomad event stream context exiting.")
-                if response is not None:
-                    response.release()
+            except URLNotFoundNomadException as e:
+                # 404 → name not found
+                raise LookupError(f"Nomad job '{job_name}' not found") from e
+            except TimeoutNomadException as e:
+                # upstream timeout → map to asyncio.TimeoutError so tenacity will retry if enabled
+                raise asyncio.TimeoutError(f"Nomad dispatch timed out: {e}") from e
+            except BaseNomadException as e:
+                # catch all other API‐level faults
+                raise RuntimeError(
+                    f"Nomad API error dispatching '{job_name}': {e}"
+                ) from e
+            # any other RequestException (e.g. ConnectionError) will bubble out
+
+        logging.info("Dispatching Nomad job %r (prefix=%r)", job_name, job_prefix)
+        resp = await asyncio.to_thread(_sync_dispatch)
+
+        if not isinstance(resp, dict) or "DispatchedJobID" not in resp:
+            raise RuntimeError(f"Bad dispatch response for {job_name!r}: {resp!r}")
+
+        return resp
