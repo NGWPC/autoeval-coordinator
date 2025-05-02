@@ -43,7 +43,7 @@ class MosaicDispatchMeta(DispatchMetaBase):
 
 
 class NomadService:
-    ALLOC_TIMEOUT = 60
+    ALLOC_TIMEOUT = 3600
 
     def __init__(self, api: NomadApiClient, monitor: NomadJobMonitor):
         self.api = api
@@ -65,7 +65,7 @@ class NomadService:
         # 2) track & wait for allocation
         ctx = await self.monitor.track_job(job_id, meta)
         try:
-            await asyncio.wait_for(ctx.alloc_fut, timeout=self.ALLOC_TIMEOUT)
+            await asyncio.wait_for(ctx.alloc_fut, timeout=None)
             logging.info("Job %s allocated – now waiting for completion", job_id)
         except asyncio.TimeoutError:
             raise RuntimeError(f"Job {job_id} not allocated in {self.ALLOC_TIMEOUT}s")

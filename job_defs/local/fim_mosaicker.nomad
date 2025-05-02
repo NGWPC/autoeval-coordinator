@@ -43,21 +43,12 @@ job "fim_mosaicker" {
 
         command = "python3"
         args = [
-          "/app/fim_mosaicker/mosaic.py",
+          "/deploy/fim_mosaicker/mosaic.py",
           "--raster_paths", "${NOMAD_META_raster_paths}",
-          "--output_path", "${NOMAD_META_output_path}",
-          "--fim-type", "${NOMAD_META_fim_type}",
+          "--mosaic_output_path", "${NOMAD_META_output_path}",
+          "--fim_type", "${NOMAD_META_fim_type}",
         ]
 
-        logging {
-          type = "awslogs"
-          config {
-            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
-            awslogs-region       = "us-east-1"
-            awslogs-stream       = "${NOMAD_JOB_ID}"
-            awslogs-create-group = "true"
-          }
-        }
       }
 
       env {

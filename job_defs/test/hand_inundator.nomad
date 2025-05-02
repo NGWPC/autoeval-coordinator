@@ -44,7 +44,7 @@ job "hand_inundator" {
         }
         command = "python3"
         args = [
-          "/app/hand_inundator/inundate.py",
+          "/deploy/hand_inundator/inundate.py",
           "--catchment-data", "${NOMAD_META_catchment_data_path}",
           "--forecast-path", "${NOMAD_META_forecast_path}",
           "--output-path", "${NOMAD_META_output_path}",
@@ -64,9 +64,6 @@ job "hand_inundator" {
       # --- Environment Variables (for AWS SDK inside container) ---
       # Pass AWS creds if provided in meta, otherwise rely on IAM instance profile
       env {
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
         GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
       }
