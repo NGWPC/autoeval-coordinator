@@ -1,0 +1,119 @@
+sequenceDiagram
+    participant Main as main.py
+    participant Coordinator as PipelineCoordinator
+    participant Pipeline as PolygonPipeline
+    participant NomadSvc as NomadService
+    participant Monitor as NomadJobMonitor
+    participant NomadApi as NomadApiClient
+    participant Events as Nomad Events API
+    participant Data as DataService
+    
+    Note over Main,Data: Application Startup
+    
+    Main->>Main: Load config & polygon data
+    Main->>Main: Create HTTP session
+    Main->>+Coordinator: Create PipelineCoordinator(config, session)
+    Coordinator->>NomadApi: Create NomadApiClient(config, session)
+    Coordinator->>Monitor: Create NomadJobMonitor(api)
+    Coordinator->>NomadSvc: Create NomadService(api, monitor)
+    Coordinator->>Data: Create DataService(config)
+    
+    Main->>+Coordinator: run(polygons)
+    Coordinator->>+Monitor: start()
+    
+    activate Monitor
+    Monitor->>Monitor: Create background task
+    Monitor->>+NomadApi: api.events.stream()
+    NomadApi->>+Events: Connect to /v1/event/stream
+    
+    rect rgb(240, 248, 255)
+      Note over Events,Monitor: Event processing loop (background task)
+      loop Event Processing
+        Events-->>NomadApi: SSE events
+        NomadApi-->>Monitor: Forward events
+        Monitor->>Monitor: Process job events:
+        Note right of Monitor: - Set alloc_fut when job pending/running
+        Note right of Monitor: - Set done_fut when job complete/failed
+      end
+    end
+    
+    Note over Coordinator: AsyncTaskGroup for parallel pipelines
+    
+    par Process Polygons Concurrently
+        Coordinator->>Pipeline: Create PolygonPipeline
+        Coordinator->>+Pipeline: _run_one(pipeline1, results)
+        
+        Pipeline->>+Pipeline: initialize()
+        Pipeline->>Data: query_for_catchments(polygon)
+        Data-->>Pipeline: Return catchment data
+        
+        Pipeline->>+Pipeline: run()
+        
+        Note right of Pipeline: TaskGroup for parallel catchment processing
+        
+        par Process Catchments
+            Pipeline->>Pipeline: _process_catchment(catchment1, info, outputs)
+            Pipeline->>Data: write_json_to_uri(info, uri)
+            Data-->>Pipeline: JSON written
+            Pipeline->>+NomadSvc: run_job(inundator, prefix, meta)
+            
+            NomadSvc->>NomadApi: dispatch_job(job_name, prefix, meta)
+            NomadApi-->>NomadSvc: Return job_id
+            
+            NomadSvc->>Monitor: track_job(job_id, meta)
+            Monitor-->>NomadSvc: Return JobContext with futures
+            
+            NomadSvc->>NomadSvc: await ctx.alloc_fut
+            
+            Note over Events,Monitor: In background task
+            Events-->>NomadApi: Job allocation event
+            NomadApi-->>Monitor: Forward event
+            Monitor->>Monitor: Resolve alloc_fut
+            
+            NomadSvc->>NomadSvc: await ctx.done_fut
+            
+            Note over Events,Monitor: In background task
+            Events-->>NomadApi: Job completion event
+            NomadApi-->>Monitor: Forward event
+            Monitor->>Monitor: Resolve done_fut with output_path
+            
+            NomadSvc-->>-Pipeline: Return output path
+            Pipeline->>Pipeline: Add to inundator_outputs
+            
+            Pipeline->>Pipeline: _process_catchment(catchment2, info, outputs)
+            Note over Pipeline: Similar process for other catchments...
+        end
+        
+        Note right of Pipeline: After all catchments complete
+        
+        Pipeline->>+NomadSvc: run_job(mosaicker, prefix, meta)
+        Note over NomadSvc: Similar process: dispatch → track → await completion
+        NomadSvc-->>-Pipeline: Return mosaic output path
+        
+        Pipeline->>Pipeline: Create Result object
+        
+        alt Success
+            Pipeline-->>Coordinator: Return successful Result
+        else Error
+            Pipeline-->>Coordinator: Return error Result
+        end
+        
+        Pipeline->>Pipeline: cleanup() temp files
+        
+        Coordinator->>Pipeline: Create PolygonPipeline for next polygon
+        Coordinator->>+Pipeline: _run_one(pipeline2, results)
+        Note over Pipeline: Similar process for other polygons...
+        Pipeline-->>Coordinator: Return Result
+    end
+    
+    Note over Coordinator: All pipelines complete
+    
+    Coordinator->>Monitor: stop()
+    Monitor->>Monitor: Cancel event task
+    Monitor->>Monitor: Resolve remaining futures with exceptions
+    deactivate Monitor
+    deactivate Events
+    
+    Coordinator-->>-Main: Return aggregated results
+    
+    Main->>Main: Log summary of succeeded/failed pipelines
