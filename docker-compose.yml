@@ -1,0 +1,12 @@
+services:
+  pipeline-dev:
+    build: .
+    entrypoint: [ sleep, infinity ]
+    volumes:
+      - ./src:/src
+      - ./config:/config
+      - ./job_defs:/job_defs
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN

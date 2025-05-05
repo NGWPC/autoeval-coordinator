@@ -69,8 +69,8 @@ job "hand_inundator" {
       }
 
       resources {
-        cpu    = 1000 # Adjust CPU MHz (example: 1 core = 1000)
-        memory = 4096 # Adjust Memory MiB (example: 4 GiB)
+        cpu    = 1000 # CPU in MHz (example: 1000 = 1 GHz)
+        memory = 2048 # Memory in MiB 
       }
 
       logs {

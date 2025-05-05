@@ -67,7 +67,7 @@ job "fim_mosaicker" {
 
       resources {
         cpu    = 1000 
-        memory = 4096 
+        memory = 2048
       }
 
       logs {
