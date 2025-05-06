@@ -1,8 +1,8 @@
 import asyncio
 import json
 import logging
-from urllib.parse import urlparse
 from typing import Dict, Any
+from urllib.parse import urlparse
 
 import aiohttp
 import nomad  # python-nomad client
@@ -23,8 +23,8 @@ from load_config import AppConfig
 
 class EventsWrapper:
     """
-    Async generator over Nomad's /v1/event/stream SSE endpoint,
-    auto-reconnecting on network blips.
+    Streams Nomad's /v1/event/stream NDJSON endpoint,
+    auto-reconnecting on network blips and resuming from last Index.
     """
 
     def __init__(
@@ -35,67 +35,73 @@ class EventsWrapper:
         headers: Dict[str, str],
     ):
         self._session = session
-        self._base_url = base_url.rstrip("/")
-        self._namespace = namespace
+        self._url = base_url.rstrip("/") + "/v1/event/stream"
         self._headers = headers
+        self._namespace = namespace or "*"
         self._index = 0
 
-    async def stream(self, topics: Dict[str, Any] = None):
-        """
-        Yields individual event dicts, reconnecting on errors
-        and resuming from last index.
-        """
-        if topics is None:
-            topics = {"Allocation": ["*"], "Job": ["*"]}
+        # pre-build static params for topics + namespace
+        self._base_params: Dict[str, Any] = {}
+        if self._namespace != "*":
+            self._base_params["namespace"] = self._namespace
+        for topic in ("Job", "Allocation"):
+            # mirror Nomad’s default topics of “*”
+            self._base_params[f"topic.{topic}"] = "*"
 
+    async def stream(self):
         backoff = 1
         while True:
-            params = {"index": self._index}
-            if self._namespace and self._namespace != "*":
-                params["namespace"] = self._namespace
-
-            # attach topic filters
-            for topic, keys in topics.items():
-                for key in keys:
-                    params[f"topic.{topic}"] = key
+            params = {"index": self._index, **self._base_params}
 
             try:
                 async with self._session.get(
-                    f"{self._base_url}/v1/event/stream",
-                    params=params,
+                    self._url,
                     headers=self._headers,
-                    timeout=None,
+                    params=params,
+                    timeout=None,  # no HTTP-level timeout
                 ) as resp:
                     resp.raise_for_status()
-                    backoff = 1
-                    async for line in resp.content:
-                        chunk = line.strip()
-                        if not chunk or chunk == b"{}":
-                            continue
-                        batch = json.loads(chunk.decode("utf-8"))
-                        self._index = batch.get("Index", self._index)
-                        for event in batch.get("Events", []):
-                            yield event
 
-            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                logging.warning(
-                    "SSE stream dropped: %s – reconnecting in %ss", e, backoff
-                )
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 30)
+                    # Even though this is `application/json`, we can still stream it:
+                    content_type = resp.headers.get("content-type", "")
+                    if "application/json" not in content_type:
+                        logging.warning(
+                            "Expected NDJSON, got Content-Type=%r", content_type
+                        )
+
+                    buffer = b""
+                    async for chunk in resp.content.iter_chunked(8 * 1024):
+                        buffer += chunk
+                        while b"\n" in buffer:
+                            line, buffer = buffer.split(b"\n", 1)
+                            if not line or line == b"{}":
+                                continue
+
+                            batch = json.loads(line.decode("utf-8"))
+                            # remember where we left off
+                            self._index = batch.get("Index", self._index)
+
+                            # yield each event in the batch
+                            for ev in batch.get("Events", []):
+                                yield ev
+
+                    # if the server cleanly closed the stream, we'll loop and reconnect
+                    logging.info("Event stream closed by server, reconnecting…")
 
             except asyncio.CancelledError:
                 raise
 
-            except Exception:
-                logging.exception("Unexpected error in SSE loop, reconnecting")
+            except Exception as e:
+                logging.warning(
+                    "NDJSON stream error %r – reconnecting in %ss", e, backoff
+                )
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30)
 
 
 class NomadApiClient:
     """
-    Wraps python-nomad for dispatch + aiohttp for SSE event streaming.
+    Wraps python-nomad for dispatch and aiohttp-sse-client for streaming.
     """
 
     def __init__(self, config: AppConfig, session: aiohttp.ClientSession):
@@ -112,11 +118,10 @@ class NomadApiClient:
             namespace=config.nomad.namespace or None,
         )
 
-        # SSE events wrapper
         self.events = EventsWrapper(
             session=self._session,
             base_url=str(config.nomad.address),
-            namespace=config.nomad.namespace or "*",
+            namespace=config.nomad.namespace,
             headers={
                 "Content-Type": "application/json",
                 **({"X-Nomad-Token": config.nomad.token} if config.nomad.token else {}),
@@ -124,7 +129,7 @@ class NomadApiClient:
         )
 
     async def close(self):
-        logging.debug("NomadApiClient.close() → no‐op")
+        logging.debug("NomadApiClient.close() → no-op")
 
     @retry(
         stop=stop_after_attempt(3),

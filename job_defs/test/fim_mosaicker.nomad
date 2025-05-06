@@ -45,7 +45,7 @@ job "fim_mosaicker" {
         args = [
           "/deploy/fim_mosaicker/mosaic.py",
           "--raster_paths", "${NOMAD_META_raster_paths}",
-          "--output_path", "${NOMAD_META_output_path}",
+          "--mosaic_output_path", "${NOMAD_META_output_path}",
           "--fim_type", "${NOMAD_META_fim_type}",
         ]
 
