@@ -195,7 +195,8 @@ if __name__ == "__main__":
 
             try:
                 result = await pipeline.run()
-                print(result.json(indent=2))
+                data = result.model_dump()
+                print(json.dumps(data, indent=2))
             finally:
                 await pipeline.cleanup()
                 await monitor.stop()
