@@ -21,3 +21,15 @@ defaults:
   gdal_cache_max: 1024  
   fim_type: "extent"
   http_connection_limit: 10
+
+
+# STAC API settings
+stac:
+  api_url: "https://my.stac.api/"
+  collections:
+    - "gfm-collection"
+    - "gfm-expanded-collection"
+    - "ble-collection"
+    - "ripple-fim-collection"
+    - "nws-collection"
+    - "usgs-collection"

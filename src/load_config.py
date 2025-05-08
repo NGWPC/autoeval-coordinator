@@ -1,16 +1,7 @@
 import logging
 import yaml
-from typing import Optional, Dict, Any, Literal
-from pydantic import (
-    BaseModel,
-    Field,
-    HttpUrl,
-    ValidationError,
-    field_validator,
-    AnyHttpUrl,
-)
-
-# --- Configuration Models ---
+from typing import Optional, Dict, Any, List
+from pydantic import BaseModel, Field, ValidationError, AnyHttpUrl
 
 
 class NomadConfig(BaseModel):
@@ -50,9 +41,21 @@ class Defaults(BaseModel):
         512, gt=0, description="GDAL cache size in MB for all jobs"
     )
     fim_type: Literal["extent", "depth"] = "extent"
-    # Removed geo_mem_cache_inundator, geo_mem_cache_mosaicker, and mosaic_resolution
     http_connection_limit: int = Field(
         10, gt=0, description="Max concurrent outgoing HTTP connections"
+    )
+
+
+class StacConfig(BaseModel):
+    """
+    STAC API config:
+      • api_url: root endpoint
+      • collections: list of collection IDs to query
+    """
+
+    api_url: AnyHttpUrl = Field(..., description="Base URL of the STAC API")
+    collections: List[str] = Field(
+        default_factory=list, description="list of STAC collection IDs"
     )
 
 
@@ -62,9 +65,7 @@ class AppConfig(BaseModel):
     s3: S3Config
     mock_data_paths: MockDataPaths
     defaults: Defaults = Field(default_factory=Defaults)
-
-
-# --- Loading Function ---
+    stac: StacConfig
 
 
 def load_config(path: str = "config.yaml") -> AppConfig:
@@ -90,7 +91,6 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         if not raw_config:
             raise ValueError(f"Configuration file is empty or invalid: {path}")
 
-        # Use model_validate for Pydantic v2
         config = AppConfig.model_validate(raw_config)
         logging.info(f"Configuration loaded and validated successfully from {path}")
         return config
