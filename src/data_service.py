@@ -1,25 +1,36 @@
 import asyncio
 import json
 import logging
-import os
-from typing import Dict, Any
-from contextlib import suppress
-import smart_open  # Import smart_open
+from typing import Any, Dict, List, Optional
+
+import smart_open
+from pystac_client import Client
 
 from load_config import AppConfig
+from stac_utils import format_results, merge_gfm_expanded, dictify
 
 
 class DataService:
-    """Service to query data sources and interact with S3 via smart_open."""
+    """
+    Service to:
+      • return catchment data (for inundator jobs)
+      • write JSON to S3/local URIs
+      • query a STAC API and group assets into {collection_short → flow_scenario → {extents, flowfiles}}
+    """
 
     def __init__(self, config: AppConfig):
         self.config = config
+        # for your mock catchment data
         self.mock_data_path = config.mock_data_paths.mock_catchment_data
-        self._cached_data = None
-        # Optional: configure transport params for smart_open if needed
-        self._transport_params = None  # E.g. config.s3.transport_params
+        self._cached_data: Optional[Dict[str, Any]] = None
+        # pass any S3 transport params (e.g. region) into smart_open
+        self._transport_params = config.s3.transport_params or {}
+        # lazy‐init for the STAC client
+        self._stac_client: Optional[Client] = None
 
-    async def _load_mock_data(self) -> Dict:
+    # Mock‐catchment I/O
+
+    async def _load_mock_data(self) -> Dict[str, Any]:
         if self._cached_data:
             return self._cached_data
         logging.info(f"Loading mock catchment data from: {self.mock_data_path}")
@@ -33,8 +44,8 @@ class DataService:
             logging.error(f"Mock data file not found: {self.mock_data_path}")
             return {"catchments": {}, "hand_version": "error_no_file"}
         except Exception as e:
-            logging.error(f"Error reading/parsing {self.mock_data_path}: {e}")
-            return {"catchments": {}, "hand_version": "error_read_decode"}
+            logging.error(f"Could not load mock catchment data: {e}")
+            return {"catchments": {}, "hand_version": "error"}
 
     async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
         """
@@ -47,9 +58,6 @@ class DataService:
         Returns:
             Dictionary with catchments and hand_version
         """
-        # Simulate a brief delay as if we're querying a service
-        await asyncio.sleep(0.01)
-
         # Log the polygon data for informational purposes
         polygon_id = polygon_data.get("polygon_id", "unknown")
         logging.info(f"Querying catchments for polygon: {polygon_id}")
@@ -84,3 +92,60 @@ class DataService:
         transport_params = self._transport_params
         with smart_open.open(uri, "w", transport_params=transport_params) as f:
             json.dump(data, f, indent=2)
+
+    # STAC Querying
+
+    @property
+    def stac_client(self) -> Client:
+        """Lazily open the STAC API via pystac-client."""
+        if self._stac_client is None:
+            self._stac_client = Client.open(self.config.stac.api_url)
+            logging.info(f"Connected to STAC API at {self.config.stac.api_url}")
+        return self._stac_client
+
+    async def query_stac_groups(
+        self,
+        datetime: Optional[str] = None,
+        intersects: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+        """
+        Async wrapper around the sync STAC search → grouping logic.
+        Returns a dict:
+          { collection_short_name → group_id → { "extents": [...], "flowfiles": [...] } }
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            self._sync_query_and_group,
+            datetime,
+            intersects,
+        )
+
+    def _sync_query_and_group(
+        self,
+        datetime: Optional[str],
+        intersects: Optional[Dict[str, Any]],
+    ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+        # build search arguments
+        search_kwargs: Dict[str, Any] = {"collections": self.config.stac.collections}
+        if datetime:
+            search_kwargs["datetime"] = datetime
+        if intersects:
+            search_kwargs["intersects"] = intersects
+
+        logging.info(f"Searching STAC with {search_kwargs}")
+        search = self.stac_client.search(**search_kwargs)
+
+        # get all matching items
+        items = list(search.get_all_items())
+        logging.info(f"Fetched {len(items)} items from STAC")
+
+        # apply your grouping rules
+        grouped = format_results(items)
+
+        # merge GFM‐expanded intervals:
+        if "gfm_expanded" in grouped:
+            grouped["gfm_expanded"] = merge_gfm_expanded(
+                grouped["gfm_expanded"], tolerance_days=3
+            )
+        return dictify(grouped)
