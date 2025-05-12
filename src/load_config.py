@@ -30,6 +30,10 @@ class S3Config(BaseModel):
     transport_params: Optional[Dict[str, Any]] = None
 
 
+class DBConfig(BaseModel):
+    path: str
+
+
 class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
     polygon_data_file: str = "mock_polygons.json"  # Path to polygon data
@@ -63,6 +67,7 @@ class AppConfig(BaseModel):
     nomad: NomadConfig
     jobs: JobNames
     s3: S3Config
+    db: Optional[DBConfig] = None
     mock_data_paths: MockDataPaths
     defaults: Defaults = Field(default_factory=Defaults)
     stac: StacConfig

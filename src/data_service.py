@@ -1,99 +1,154 @@
 import asyncio
-import json
 import logging
 from typing import Any, Dict, List, Optional
 
 import smart_open
 from pystac_client import Client
-
+import pandas as pd
+import duckdb
 from load_config import AppConfig
 from stac_utils import format_results, merge_gfm_expanded, dictify
+from hand_catchments import get_catchment_data_for_polygon, filter_dataframes_by_overlap
 
 
 class DataService:
     """
-    Service to:
-      • return catchment data (for inundator jobs)
-      • write JSON to S3/local URIs
-      • query a STAC API and group assets into {collection_short → flow_scenario → {extents, flowfiles}}
+    - If use_mock_data=True: load a directory of Parquet table of mock attributes,
+      group by catchment_id, write per‐catchment Parquet to S3.
+    - Else: connect to DuckDB, run real spatial queries, write per‐catchment Parquet to S3.
+    - query a STAC API and group assets into {collection_short → flow_scenario → {extents, flowfiles}}
     """
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, db_path: Optional[str] = None):
         self.config = config
-        # for your mock catchment data
-        self.mock_data_path = config.mock_data_paths.mock_catchment_data
-        self._cached_data: Optional[Dict[str, Any]] = None
-        # pass any S3 transport params (e.g. region) into smart_open
-        self._transport_params = config.s3.transport_params or {}
+        self.use_mock = config.use_mock_data
+        # override or use config.db.path
+        self.db_path = db_path or (config.db.path if config.db else None)
+        if not self.use_mock and not self.db_path:
+            raise ValueError("DuckDB path must be provided in real mode")
+
+        # cache for mock table
+        self._cached_df: Optional[pd.DataFrame] = None
+
         # lazy‐init for the STAC client
         self._stac_client: Optional[Client] = None
 
-    # Mock‐catchment I/O
+        # pass any S3 transport options into pandas.to_parquet
+        self._transport_params = config.s3.transport_params or {}
 
-    async def _load_mock_data(self) -> Dict[str, Any]:
-        if self._cached_data:
-            return self._cached_data
-        logging.info(f"Loading mock catchment data from: {self.mock_data_path}")
+    async def query_for_catchments(
+        self, polygon_data: Dict[str, Any], pipeline_id: str
+    ) -> Dict[str, Any]:
+        """
+        Returns a dict:
+          {
+            "catchments": {
+              catchment_id: {"catchment_data_path": "s3://.../catchment_data.parquet"},
+              ...
+            }
+          }
+        """
+        if self.use_mock:
+            return await self._get_and_write_mock_catchments(polygon_data, pipeline_id)
+        else:
+            return await self._get_and_write_real_catchments(polygon_data, pipeline_id)
+
+    async def _get_and_write_mock_catchments(
+        self, polygon_data: Dict[str, Any], pipeline_id: str
+    ) -> Dict[str, Any]:
+        import os
+
+        # lazy load
+        if self._cached_df is None:
+            path = self.config.mock_data_paths.mock_catchment_data
+            logging.info(f"Loading mock catchment Parquet from: {path}")
+            self._cached_df = pd.read_parquet(path)
+
+        df = self._cached_df
+        bucket = self.config.s3.bucket
+        prefix = self.config.s3.base_prefix
+
+        catchments: Dict[str, Dict[str, str]] = {}
+
+        # group by catchment_id
+        for catch_id, group in df.groupby("catchment_id"):
+            base = f"s3://{bucket}/{prefix}/pipeline_{pipeline_id}/catchment_{catch_id}"
+            uri = f"{base}/catchment_data.parquet"
+
+            # drop the id column inside
+            df_to_write = group.drop(columns=["catchment_id"])
+
+            # write
+            await self.write_parquet_to_uri(df_to_write, uri)
+            logging.info("Wrote mock catchment %s → %s", catch_id, uri)
+
+            catchments[str(catch_id)] = {"catchment_data_path": uri}
+
+        return {"catchments": catchments}
+
+    async def _get_and_write_real_catchments(
+        self, polygon_data: Dict[str, Any], pipeline_id: str
+    ) -> Dict[str, Any]:
+        bucket = self.config.s3.bucket
+        prefix = self.config.s3.base_prefix
+
+        # open DuckDB
+        con = duckdb.connect(database=self.db_path, read_only=True)
         try:
-            # Use smart_open for reading local file too (consistency)
-            with smart_open.open(self.mock_data_path, "r") as f:
-                data = json.load(f)
-            self._cached_data = data
-            return data
-        except FileNotFoundError:
-            logging.error(f"Mock data file not found: {self.mock_data_path}")
-            return {"catchments": {}, "hand_version": "error_no_file"}
-        except Exception as e:
-            logging.error(f"Could not load mock catchment data: {e}")
-            return {"catchments": {}, "hand_version": "error"}
+            con.execute("LOAD spatial;")
+        except duckdb.Error:
+            logging.warning("Could not load DuckDB 'spatial' extension.")
 
-    async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
-        """
-        Returns catchment data for the given polygon.
-        In this mock implementation, we return the same data regardless of polygon_data.
-
-        Args:
-            polygon_data: Dictionary containing polygon information
-
-        Returns:
-            Dictionary with catchments and hand_version
-        """
-        # Log the polygon data for informational purposes
-        polygon_id = polygon_data.get("polygon_id", "unknown")
-        logging.info(f"Querying catchments for polygon: {polygon_id}")
-
-        # Load the mock data
-        data = await self._load_mock_data()
-
-        logging.info(
-            f"Data service returning {len(data.get('catchments', {}))} catchments for polygon {polygon_id}."
+        # run the two‐step query
+        geoms_gdf, attrs_df, query_poly = get_catchment_data_for_polygon(
+            polygon_data, con
         )
-        return data
+        con.close()
 
-    async def write_json_to_uri(self, data: Dict, uri: str):
-        """Writes dictionary as JSON to a URI (local or S3) using smart_open."""
-        logging.debug(f"Writing JSON data to: {uri}")
-        try:
-            # smart_open write is synchronous, run in executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,  # Use default thread pool executor
-                self._sync_write_json,
-                data,
-                uri,
-            )
-            logging.info(f"Successfully wrote JSON to {uri}")
-        except Exception as e:
-            logging.exception(f"Failed to write JSON to {uri}")
-            raise ConnectionError(f"Failed to write JSON to {uri}") from e
+        if attrs_df.empty:
+            logging.info("Real query yielded no catchments.")
+            return {"catchments": {}}
 
-    def _sync_write_json(self, data: Dict, uri: str):
-        """Synchronous helper for writing JSON using smart_open."""
-        transport_params = self._transport_params
-        with smart_open.open(uri, "w", transport_params=transport_params) as f:
-            json.dump(data, f, indent=2)
+        # apply overlap‐filter
+        # read from config.defaults.catchment_overlap_percent if available
+        threshold = getattr(self.config.defaults, "catchment_overlap_percent", 10.0)
+        fg, fa, stats = filter_dataframes_by_overlap(
+            geoms_gdf, attrs_df, query_poly, threshold
+        )
+        logging.info("Overlap filter summary: %s", stats)
 
-    # STAC Querying
+        if fa.empty:
+            logging.info("All catchments removed by overlap filter.")
+            return {"catchments": {}}
+
+        # write one Parquet per remaining catchment
+        catchments: Dict[str, Dict[str, str]] = {}
+        for catch_id, group in fa.groupby("catchment_id"):
+            base = f"s3://{bucket}/{prefix}/pipeline_{pipeline_id}/catchment_{catch_id}"
+            uri = f"{base}/catchment_data.parquet"
+            df_to_write = group.drop(columns=["catchment_id"])
+
+            await self.write_parquet_to_uri(df_to_write, uri)
+            logging.info("Wrote real catchment %s → %s", catch_id, uri)
+
+            catchments[str(catch_id)] = {"catchment_data_path": uri}
+
+        return {"catchments": catchments}
+
+    async def write_parquet_to_uri(self, df: pd.DataFrame, uri: str):
+        """Async wrapper; uses pandas.to_parquet under the hood."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._sync_write_parquet, df, uri)
+
+    def _sync_write_parquet(self, df, uri: str):
+        """
+        Synchronous helper for pandas.to_parquet.
+        If s3://, pass transport_params to storage_options.
+        """
+        if uri.startswith("s3://"):
+            df.to_parquet(uri, index=False, storage_options=self._transport_params)
+        else:
+            df.to_parquet(uri, index=False)
 
     @property
     def stac_client(self) -> Client:

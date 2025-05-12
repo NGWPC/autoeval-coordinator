@@ -1,7 +1,7 @@
 nomad:
   address: "http://127.0.0.1:4646" 
   token: null
-  namespace: "*"
+  namespace: "default"
   registry_token: ""
 
 jobs:
@@ -10,10 +10,13 @@ jobs:
 
 s3:
   bucket: "fimc-data" 
-  base_prefix: "pipeline-runs"
+  base_prefix: "autoeval/pipeline-runs"
+
+db:
+  path: "/home/dylan.lee/hand-metadata-db/test_data/test-hand-index.ddb"
 
 mock_data_paths:
-  mock_catchment_data: "/home/dylan.lee/autoeval-coordinator/mock_data/huc03130002_handoutput_pretty.json" #local path to mock_data dir
+  mock_catchment_data: "/home/dylan.lee/autoeval-coordinator/mock_data/mock_catchment/"
   polygon_data_file: "/home/dylan.lee/autoeval-coordinator/mock_data/mock_polygons.json" #local path to mock_data dir
   forecast_csv: "s3://fimc-data/benchmark/ripple_fim_30/nwm_return_period_flows_10_yr_cms.csv" #s3 path to a flowfile with discharge in CMS
 

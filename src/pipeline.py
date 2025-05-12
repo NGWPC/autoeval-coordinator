@@ -21,9 +21,9 @@ from job_monitor import NomadJobMonitor
 class PolygonPipeline:
     """
     1) Query catchments for a polygon
-    2) For each catchment: write JSON → dispatch inundator → await results
+    2) Dispatch one HAND inundator per‐catchment
     3) Mosaic all inundation outputs
-    4) Query STAC API for flood‐extent rasters → mosaic them → await results
+    4) Query STAC API & mosaic
     """
 
     class Result(BaseModel):
@@ -51,7 +51,7 @@ class PolygonPipeline:
         self.catchments: Dict[str, Dict[str, Any]] = {}
 
     async def initialize(self) -> None:
-        data = await self.data_svc.query_for_catchments(self.polygon)
+        data = await self.data_svc.query_for_catchments(self.polygon, self.pipeline_id)
         self.catchments = data.get("catchments", {})
         if not self.catchments:
             raise RuntimeError(f"pipeline [{self.pipeline_id}] no catchments found")
@@ -154,21 +154,31 @@ class PolygonPipeline:
         collector: List[str],
     ) -> None:
         """
-        1) write catchment JSON to S3
-        2) dispatch inundator job
-        3) await output and append its path
+        dispatch inundator job
+        await output and append its path
         """
+        # path that DataService has already populated
+        catch_path = info["catchment_data_path"]
+        logging.info(
+            "[%s/%s] Using catchment data → %s",
+            self.pipeline_id,
+            catch_id,
+            catch_path,
+        )
+
+        # build output
         base = (
             f"s3://{self.config.s3.bucket}/"
             f"{self.config.s3.base_prefix}/"
             f"pipeline_{self.pipeline_id}/catchment_{catch_id}"
         )
+        out_tif = f"{base}/inundation_output.tif"
 
         meta = InundationDispatchMeta(
             pipeline_id=self.pipeline_id,
-            catchment_data_path=f"{base}/catchment_data.json",
+            catchment_data_path=catch_path,
             forecast_path=self.config.mock_data_paths.forecast_csv,
-            output_path=f"{base}/inundation_output.tif",
+            output_path=out_tif,
             fim_type=self.config.defaults.fim_type,
             gdal_cache_max=str(self.config.defaults.gdal_cache_max),
             registry_token=self.config.nomad.registry_token or "",
@@ -177,16 +187,7 @@ class PolygonPipeline:
             aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
         )
 
-        # write JSON
-        await self.data_svc.write_json_to_uri(info, meta.catchment_data_path)
-        logging.info(
-            "[%s/%s] Wrote catchment JSON → %s",
-            self.pipeline_id,
-            catch_id,
-            meta.catchment_data_path,
-        )
-
-        # run inundator job
+        # dispatch
         out = await self.nomad.run_job(
             self.config.jobs.hand_inundator,
             instance_prefix=f"inund-{self.pipeline_id[:8]}-{catch_id}",
@@ -205,6 +206,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument(
         "--polys",
+        required=True,
         help="JSON file containing a list of polygon dicts",
     )
     parser.add_argument(
@@ -218,6 +220,15 @@ if __name__ == "__main__":
         default=os.path.join("config", "pipeline_config.yml"),
         help="Path to the YAML config",
     )
+    parser.add_argument(
+        "--db",
+        help="Path to DuckDB file (overrides config.db.path)",
+    )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use mock Parquet catchments instead of real DuckDB",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -226,15 +237,15 @@ if __name__ == "__main__":
     )
 
     cfg = load_config(args.config)
+    # override if CLI says mock
+    if args.mock:
+        cfg.use_mock_data = True
 
-    with open(args.polys, "r") as fp:
-        polygons = json.load(fp)
-    if not polygons:
-        raise RuntimeError(f"No polygons found in {args.polygons_file!r}")
-    polygon = polygons[args.index]
+    # instantiate DataService with optional db override
+    data_svc = DataService(cfg, db_path=args.db)
 
+    # HTTP session + Nomad client / monitor setup
     async def _main():
-        # HTTP session + Nomad client / monitor setup
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
         async with aiohttp.ClientSession(
@@ -245,14 +256,18 @@ if __name__ == "__main__":
             monitor = NomadJobMonitor(api)
             await monitor.start()
             nomad = NomadService(api, monitor)
-            data_svc = DataService(cfg)
+
+            # load polygons
+            with open(args.polys, "r") as fp:
+                polygons = json.load(fp)
+            polygon = polygons[args.index]
+
             pid = "850"
             pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon, pid)
 
             try:
                 result = await pipeline.run()
-                data = result.model_dump()
-                print(json.dumps(data, indent=2))
+                print(json.dumps(result.model_dump(), indent=2))
             finally:
                 await pipeline.cleanup()
                 await monitor.stop()
