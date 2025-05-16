@@ -35,7 +35,8 @@ job "hand_inundator" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs" 
+        # use last known stable version in test
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.1" 
         force_pull = true
 
         auth {
