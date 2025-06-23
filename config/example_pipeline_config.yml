@@ -1,7 +1,7 @@
 nomad:
   address: "http://127.0.0.1:4646" 
   token: null
-  namespace: "*"
+  namespace: "default"
   registry_token: ""
 
 jobs:
