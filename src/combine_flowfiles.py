@@ -102,9 +102,11 @@ def combine_flowfiles(flowfile_paths, output_path):
 
     combined_df = pd.concat(all_dfs, ignore_index=True)
 
+    if len(combined_df.columns) < 2:
+        raise ValueError(f"Combined flowfile must have at least 2 columns.")
+
     # Deduplicate rows based on the first column, keeping the maximum value in the second column
-    if len(combined_df.columns) >= 2:
-        combined_df = combined_df.groupby(combined_df.columns[0], as_index=False)[combined_df.columns[1]].max()
+    combined_df = combined_df.groupby(combined_df.columns[0], as_index=False)[combined_df.columns[1]].max()
 
     combined_df.to_csv(output_path, index=False, header=header)
     print(f"  Combined flowfile saved to: {output_path}")
