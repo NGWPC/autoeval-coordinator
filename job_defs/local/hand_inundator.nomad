@@ -2,11 +2,6 @@ job "hand_inundator" {
   datacenters = ["dc1"] 
   type        = "batch"
 
-  constraint {
-    attribute = "${node.class}"
-    value     = "linux"
-  }
-
   parameterized {
     meta_required = [
       "pipeline_id",
@@ -35,7 +30,7 @@ job "hand_inundator" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
         force_pull = true
 
         auth {
@@ -45,9 +40,10 @@ job "hand_inundator" {
         command = "python3"
         args = [
           "/deploy/hand_inundator/inundate.py",
-          "--catchment-data", "${NOMAD_META_catchment_data_path}",
-          "--forecast-path", "${NOMAD_META_forecast_path}",
-          "--output-path", "${NOMAD_META_output_path}",
+          "--catchment_data_path", "${NOMAD_META_catchment_data_path}",
+          "--forecast_path", "${NOMAD_META_forecast_path}",
+          "--fim_output_path", "${NOMAD_META_output_path}",
+          "--fim_type", "${NOMAD_META_fim_type}",
         ]
 
       }

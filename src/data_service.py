@@ -2,11 +2,18 @@ import asyncio
 import json
 import logging
 import os
-from typing import Dict, Any
+import tempfile
 from contextlib import suppress
+from pathlib import Path
+from typing import Any, Dict, List
+
+import geopandas as gpd
 import smart_open  # Import smart_open
+from botocore.exceptions import NoCredentialsError, ClientError
+from shapely.geometry import shape
 
 from load_config import AppConfig
+from hand_index_querier import HandIndexQuerier
 
 
 class DataService:
@@ -15,37 +22,84 @@ class DataService:
     def __init__(self, config: AppConfig):
         self.config = config
         self.mock_data_path = config.mock_data_paths.mock_catchment_data
-        self._cached_data = None
+        self._cached_parquet_files = None
         # Optional: configure transport params for smart_open if needed
         self._transport_params = None  # E.g. config.s3.transport_params
+        
+        # Initialize HandIndexQuerier if enabled
+        self.hand_querier = None
+        if config.hand_index.enabled:
+            self.hand_querier = HandIndexQuerier(
+                partitioned_base_path=config.hand_index.partitioned_base_path,
+                overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
+            )
 
-    async def _load_mock_data(self) -> Dict:
-        if self._cached_data:
-            return self._cached_data
-        logging.info(f"Loading mock catchment data from: {self.mock_data_path}")
+    async def _load_parquet_file_list(self) -> List[str]:
+        """Load list of parquet files from the mock data directory."""
+        if self._cached_parquet_files:
+            return self._cached_parquet_files
+
+        logging.info(f"Loading parquet files from: {self.mock_data_path}")
         try:
-            # Use smart_open for reading local file too (consistency)
-            with smart_open.open(self.mock_data_path, "r") as f:
-                data = json.load(f)
-            self._cached_data = data
-            return data
-        except FileNotFoundError:
-            logging.error(f"Mock data file not found: {self.mock_data_path}")
-            return {"catchments": {}, "hand_version": "error_no_file"}
+            # Get all parquet files in the directory
+            data_dir = Path(self.mock_data_path)
+            if not data_dir.exists():
+                raise FileNotFoundError(f"Directory not found: {self.mock_data_path}")
+
+            parquet_files = list(data_dir.glob("*.parquet"))
+            if not parquet_files:
+                raise ValueError(f"No parquet files found in {self.mock_data_path}")
+
+            self._cached_parquet_files = [str(f) for f in parquet_files]
+            logging.info(f"Found {len(self._cached_parquet_files)} parquet files")
+            return self._cached_parquet_files
         except Exception as e:
-            logging.error(f"Error reading/parsing {self.mock_data_path}: {e}")
-            return {"catchments": {}, "hand_version": "error_read_decode"}
+            logging.error(f"Error loading parquet files from {self.mock_data_path}: {e}")
+            return []
+
+    def _polygon_dict_to_geodataframe(self, polygon_data: Dict[str, Any]) -> gpd.GeoDataFrame:
+        """
+        Convert polygon data dictionary to GeoDataFrame.
+        
+        Args:
+            polygon_data: Dictionary containing polygon information with 'geometry' key
+            
+        Returns:
+            GeoDataFrame with the polygon geometry
+        """
+        # Extract geometry from polygon data
+        # Assume polygon_data has a 'geometry' key with GeoJSON-like structure
+        if 'geometry' not in polygon_data:
+            raise ValueError("Polygon data must contain a 'geometry' key")
+        
+        geometry = polygon_data['geometry']
+        
+        # Convert to shapely geometry
+        if isinstance(geometry, dict):
+            # Assume it's GeoJSON-like
+            shapely_geom = shape(geometry)
+        else:
+            raise ValueError("Geometry must be a dictionary (GeoJSON-like)")
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(
+            [polygon_data], 
+            geometry=[shapely_geom],
+            crs="EPSG:4326"  # Assume input is in WGS84
+        )
+        
+        return gdf
 
     async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
         """
         Returns catchment data for the given polygon.
-        In this mock implementation, we return the same data regardless of polygon_data.
+        Uses HandIndexQuerier for real spatial queries if enabled, otherwise uses mock data.
 
         Args:
             polygon_data: Dictionary containing polygon information
 
         Returns:
-            Dictionary with catchments and hand_version
+            Dictionary with catchments mapping IDs to parquet file paths
         """
         # Simulate a brief delay as if we're querying a service
         await asyncio.sleep(0.01)
@@ -54,33 +108,175 @@ class DataService:
         polygon_id = polygon_data.get("polygon_id", "unknown")
         logging.info(f"Querying catchments for polygon: {polygon_id}")
 
-        # Load the mock data
-        data = await self._load_mock_data()
+        if self.hand_querier and self.config.hand_index.enabled:
+            # Use real hand index query
+            try:
+                # Convert polygon data to GeoDataFrame
+                polygon_gdf = self._polygon_dict_to_geodataframe(polygon_data)
+                
+                # Create temporary directory for parquet outputs
+                with tempfile.TemporaryDirectory(prefix=f"catchments_{polygon_id}_") as temp_dir:
+                    # Run the query with temporary output directory
+                    loop = asyncio.get_running_loop()
+                    catchments_result = await loop.run_in_executor(
+                        None,
+                        self.hand_querier.query_catchments_for_polygon,
+                        polygon_gdf,
+                        temp_dir,
+                    )
+                    
+                    if not catchments_result:
+                        logging.info(f"No catchments found for polygon {polygon_id}")
+                        return {"catchments": {}, "hand_version": "real_query"}
+                    
+                    # Copy parquet files to a more permanent location if needed
+                    # For now, we'll keep them in temp and rely on the pipeline to copy to S3
+                    catchments = {}
+                    for catch_id, info in catchments_result.items():
+                        # The parquet files are in temp_dir, we need to ensure they persist
+                        # Copy to a location that won't be cleaned up immediately
+                        temp_file = Path(info["parquet_path"])
+                        persistent_dir = Path(f"/tmp/catchments_{polygon_id}")
+                        persistent_dir.mkdir(exist_ok=True)
+                        persistent_path = persistent_dir / temp_file.name
+                        
+                        # Copy the file to persistent location
+                        import shutil
+                        shutil.copy2(temp_file, persistent_path)
+                        
+                        catchments[catch_id] = {
+                            "parquet_path": str(persistent_path),
+                            "row_count": info.get("row_count", 0),
+                        }
+                    
+                    logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (real query).")
+                    return {"catchments": catchments, "hand_version": "real_query"}
+                    
+            except Exception as e:
+                logging.error(f"Error in hand index query for polygon {polygon_id}: {e}")
+                logging.info("Falling back to mock data")
+                # Fall through to mock data logic
+        
+        # Use mock data (original logic)
+        parquet_files = await self._load_parquet_file_list()
 
-        logging.info(
-            f"Data service returning {len(data.get('catchments', {}))} catchments for polygon {polygon_id}."
-        )
-        return data
+        # Create catchments dict with catchment ID as key and parquet path as value
+        # Extract catchment ID from filename (UUID before .parquet)
+        catchments = {}
+        for pf in parquet_files:
+            filename = Path(pf).stem  # Get filename without extension
+            catchments[filename] = {"parquet_path": pf}
 
-    async def write_json_to_uri(self, data: Dict, uri: str):
-        """Writes dictionary as JSON to a URI (local or S3) using smart_open."""
-        logging.debug(f"Writing JSON data to: {uri}")
-        try:
-            # smart_open write is synchronous, run in executor
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None,  # Use default thread pool executor
-                self._sync_write_json,
-                data,
-                uri,
-            )
-            logging.info(f"Successfully wrote JSON to {uri}")
-        except Exception as e:
-            logging.exception(f"Failed to write JSON to {uri}")
-            raise ConnectionError(f"Failed to write JSON to {uri}") from e
+        logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (mock data).")
+        return {"catchments": catchments, "hand_version": "mock_data"}
 
-    def _sync_write_json(self, data: Dict, uri: str):
-        """Synchronous helper for writing JSON using smart_open."""
+    async def copy_file_to_uri(self, source_path: str, dest_uri: str):
+        """Copies a file (e.g., parquet) to a URI (local or S3) using smart_open.
+        Only copies if source is local and destination is S3."""
+
+        # Only copy if source is local and destination is S3
+        if not source_path.startswith(("s3://", "http://", "https://")) and dest_uri.startswith("s3://"):
+            logging.debug(f"Copying file from {source_path} to {dest_uri}")
+            try:
+                # Run in executor for async operation
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    self._sync_copy_file,
+                    source_path,
+                    dest_uri,
+                )
+                logging.info(f"Successfully copied {source_path} to {dest_uri}")
+                return dest_uri
+            except Exception as e:
+                logging.exception(f"Failed to copy {source_path} to {dest_uri}")
+                raise ConnectionError(f"Failed to copy file to {dest_uri}") from e
+        else:
+            # If already on S3 or both local, just return the source path
+            logging.debug(f"No copy needed - using existing path: {source_path}")
+            return source_path
+
+    def _sync_copy_file(self, source_path: str, dest_uri: str):
+        """Synchronous helper for copying files using smart_open."""
         transport_params = self._transport_params
-        with smart_open.open(uri, "w", transport_params=transport_params) as f:
-            json.dump(data, f, indent=2)
+        with open(source_path, "rb") as src:
+            with smart_open.open(dest_uri, "wb", transport_params=transport_params) as dst:
+                dst.write(src.read())
+
+    async def check_s3_file_exists(self, s3_uri: str) -> bool:
+        """Check if an S3 file exists.
+        
+        Args:
+            s3_uri: S3 URI to check (e.g., "s3://bucket/path/file.tif")
+            
+        Returns:
+            True if file exists, False otherwise
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                self._sync_check_s3_file_exists,
+                s3_uri,
+            )
+        except Exception as e:
+            logging.warning(f"Error checking S3 file {s3_uri}: {e}")
+            return False
+
+    def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
+        """Synchronous helper to check if S3 file exists."""
+        try:
+            with smart_open.open(s3_uri, "rb", transport_params=self._transport_params) as f:
+                # Try to read a single byte to confirm file exists and is readable
+                f.read(1)
+            return True
+        except (FileNotFoundError, NoCredentialsError, ClientError) as e:
+            logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")
+            return False
+        except Exception as e:
+            logging.warning(f"Unexpected error checking S3 file {s3_uri}: {e}")
+            return False
+
+    async def validate_s3_files(self, s3_uris: List[str]) -> List[str]:
+        """Validate a list of S3 URIs and return only the ones that exist.
+        
+        Args:
+            s3_uris: List of S3 URIs to validate
+            
+        Returns:
+            List of S3 URIs that exist and are accessible
+        """
+        if not s3_uris:
+            return []
+            
+        logging.info(f"Validating {len(s3_uris)} S3 files...")
+        
+        # Check all files concurrently
+        tasks = [self.check_s3_file_exists(uri) for uri in s3_uris]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        valid_uris = []
+        missing_uris = []
+        
+        for uri, result in zip(s3_uris, results):
+            if isinstance(result, Exception):
+                logging.error(f"Error validating S3 file {uri}: {result}")
+                missing_uris.append(uri)
+            elif result:
+                valid_uris.append(uri)
+            else:
+                missing_uris.append(uri)
+        
+        if missing_uris:
+            logging.info(f"Found {len(missing_uris)} missing S3 files:")
+            for uri in missing_uris:
+                logging.info(f"  Missing: {uri}")
+        
+        logging.info(f"Validated S3 files: {len(valid_uris)} exist, {len(missing_uris)} missing")
+        return valid_uris
+
+    def cleanup(self):
+        """Clean up resources, including HandIndexQuerier connection."""
+        if self.hand_querier:
+            self.hand_querier.close()
+            self.hand_querier = None
