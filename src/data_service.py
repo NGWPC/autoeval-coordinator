@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import smart_open  # Import smart_open
+from botocore.exceptions import NoCredentialsError, ClientError
 
 from load_config import AppConfig
 
@@ -107,3 +108,75 @@ class DataService:
         with open(source_path, "rb") as src:
             with smart_open.open(dest_uri, "wb", transport_params=transport_params) as dst:
                 dst.write(src.read())
+
+    async def check_s3_file_exists(self, s3_uri: str) -> bool:
+        """Check if an S3 file exists.
+        
+        Args:
+            s3_uri: S3 URI to check (e.g., "s3://bucket/path/file.tif")
+            
+        Returns:
+            True if file exists, False otherwise
+        """
+        try:
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(
+                None,
+                self._sync_check_s3_file_exists,
+                s3_uri,
+            )
+        except Exception as e:
+            logging.warning(f"Error checking S3 file {s3_uri}: {e}")
+            return False
+
+    def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
+        """Synchronous helper to check if S3 file exists."""
+        try:
+            with smart_open.open(s3_uri, "rb", transport_params=self._transport_params) as f:
+                # Try to read a single byte to confirm file exists and is readable
+                f.read(1)
+            return True
+        except (FileNotFoundError, NoCredentialsError, ClientError) as e:
+            logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")
+            return False
+        except Exception as e:
+            logging.warning(f"Unexpected error checking S3 file {s3_uri}: {e}")
+            return False
+
+    async def validate_s3_files(self, s3_uris: List[str]) -> List[str]:
+        """Validate a list of S3 URIs and return only the ones that exist.
+        
+        Args:
+            s3_uris: List of S3 URIs to validate
+            
+        Returns:
+            List of S3 URIs that exist and are accessible
+        """
+        if not s3_uris:
+            return []
+            
+        logging.info(f"Validating {len(s3_uris)} S3 files...")
+        
+        # Check all files concurrently
+        tasks = [self.check_s3_file_exists(uri) for uri in s3_uris]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        valid_uris = []
+        missing_uris = []
+        
+        for uri, result in zip(s3_uris, results):
+            if isinstance(result, Exception):
+                logging.error(f"Error validating S3 file {uri}: {result}")
+                missing_uris.append(uri)
+            elif result:
+                valid_uris.append(uri)
+            else:
+                missing_uris.append(uri)
+        
+        if missing_uris:
+            logging.info(f"Found {len(missing_uris)} missing S3 files:")
+            for uri in missing_uris:
+                logging.info(f"  Missing: {uri}")
+        
+        logging.info(f"Validated S3 files: {len(valid_uris)} exist, {len(missing_uris)} missing")
+        return valid_uris

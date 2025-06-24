@@ -70,10 +70,20 @@ class PolygonPipeline:
             for catch_id, info in self.catchments.items():
                 tg.create_task(self._process_catchment(catch_id, info, inund_outputs))
 
+        # 2.5) Validate S3 outputs before mosaicking
+        valid_outputs = await self.data_svc.validate_s3_files(inund_outputs)
+        if not valid_outputs:
+            raise RuntimeError(f"[{self.pipeline_id}] No valid inundation outputs found for mosaicking")
+        
+        if len(valid_outputs) < len(inund_outputs):
+            logging.info(
+                f"[{self.pipeline_id}] Only {len(valid_outputs)}/{len(inund_outputs)} inundation outputs are valid"
+            )
+
         # 3) Dispatch & await mosaicker
         mosaic_meta = MosaicDispatchMeta(
             pipeline_id=self.pipeline_id,
-            raster_paths=inund_outputs,
+            raster_paths=valid_outputs,
             output_path=(
                 f"s3://{self.config.s3.bucket}"
                 f"/{self.config.s3.base_prefix}"
