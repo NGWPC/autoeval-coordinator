@@ -2,14 +2,18 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List
 
+import geopandas as gpd
 import smart_open  # Import smart_open
 from botocore.exceptions import NoCredentialsError, ClientError
+from shapely.geometry import shape
 
 from load_config import AppConfig
+from hand_index_querier import HandIndexQuerier
 
 
 class DataService:
@@ -21,6 +25,14 @@ class DataService:
         self._cached_parquet_files = None
         # Optional: configure transport params for smart_open if needed
         self._transport_params = None  # E.g. config.s3.transport_params
+        
+        # Initialize HandIndexQuerier if enabled
+        self.hand_querier = None
+        if config.hand_index.enabled:
+            self.hand_querier = HandIndexQuerier(
+                partitioned_base_path=config.hand_index.partitioned_base_path,
+                overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
+            )
 
     async def _load_parquet_file_list(self) -> List[str]:
         """Load list of parquet files from the mock data directory."""
@@ -45,10 +57,43 @@ class DataService:
             logging.error(f"Error loading parquet files from {self.mock_data_path}: {e}")
             return []
 
+    def _polygon_dict_to_geodataframe(self, polygon_data: Dict[str, Any]) -> gpd.GeoDataFrame:
+        """
+        Convert polygon data dictionary to GeoDataFrame.
+        
+        Args:
+            polygon_data: Dictionary containing polygon information with 'geometry' key
+            
+        Returns:
+            GeoDataFrame with the polygon geometry
+        """
+        # Extract geometry from polygon data
+        # Assume polygon_data has a 'geometry' key with GeoJSON-like structure
+        if 'geometry' not in polygon_data:
+            raise ValueError("Polygon data must contain a 'geometry' key")
+        
+        geometry = polygon_data['geometry']
+        
+        # Convert to shapely geometry
+        if isinstance(geometry, dict):
+            # Assume it's GeoJSON-like
+            shapely_geom = shape(geometry)
+        else:
+            raise ValueError("Geometry must be a dictionary (GeoJSON-like)")
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(
+            [polygon_data], 
+            geometry=[shapely_geom],
+            crs="EPSG:4326"  # Assume input is in WGS84
+        )
+        
+        return gdf
+
     async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
         """
         Returns catchment data for the given polygon.
-        In this mock implementation, we return parquet file paths as catchment IDs.
+        Uses HandIndexQuerier for real spatial queries if enabled, otherwise uses mock data.
 
         Args:
             polygon_data: Dictionary containing polygon information
@@ -63,7 +108,56 @@ class DataService:
         polygon_id = polygon_data.get("polygon_id", "unknown")
         logging.info(f"Querying catchments for polygon: {polygon_id}")
 
-        # Load the parquet file list
+        if self.hand_querier and self.config.hand_index.enabled:
+            # Use real hand index query
+            try:
+                # Convert polygon data to GeoDataFrame
+                polygon_gdf = self._polygon_dict_to_geodataframe(polygon_data)
+                
+                # Create temporary directory for parquet outputs
+                with tempfile.TemporaryDirectory(prefix=f"catchments_{polygon_id}_") as temp_dir:
+                    # Run the query with temporary output directory
+                    loop = asyncio.get_running_loop()
+                    catchments_result = await loop.run_in_executor(
+                        None,
+                        self.hand_querier.query_catchments_for_polygon,
+                        polygon_gdf,
+                        temp_dir,
+                    )
+                    
+                    if not catchments_result:
+                        logging.info(f"No catchments found for polygon {polygon_id}")
+                        return {"catchments": {}, "hand_version": "real_query"}
+                    
+                    # Copy parquet files to a more permanent location if needed
+                    # For now, we'll keep them in temp and rely on the pipeline to copy to S3
+                    catchments = {}
+                    for catch_id, info in catchments_result.items():
+                        # The parquet files are in temp_dir, we need to ensure they persist
+                        # Copy to a location that won't be cleaned up immediately
+                        temp_file = Path(info["parquet_path"])
+                        persistent_dir = Path(f"/tmp/catchments_{polygon_id}")
+                        persistent_dir.mkdir(exist_ok=True)
+                        persistent_path = persistent_dir / temp_file.name
+                        
+                        # Copy the file to persistent location
+                        import shutil
+                        shutil.copy2(temp_file, persistent_path)
+                        
+                        catchments[catch_id] = {
+                            "parquet_path": str(persistent_path),
+                            "row_count": info.get("row_count", 0),
+                        }
+                    
+                    logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (real query).")
+                    return {"catchments": catchments, "hand_version": "real_query"}
+                    
+            except Exception as e:
+                logging.error(f"Error in hand index query for polygon {polygon_id}: {e}")
+                logging.info("Falling back to mock data")
+                # Fall through to mock data logic
+        
+        # Use mock data (original logic)
         parquet_files = await self._load_parquet_file_list()
 
         # Create catchments dict with catchment ID as key and parquet path as value
@@ -73,8 +167,8 @@ class DataService:
             filename = Path(pf).stem  # Get filename without extension
             catchments[filename] = {"parquet_path": pf}
 
-        logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id}.")
-        return {"catchments": catchments, "hand_version": "parquet_based"}
+        logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (mock data).")
+        return {"catchments": catchments, "hand_version": "mock_data"}
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
         """Copies a file (e.g., parquet) to a URI (local or S3) using smart_open.
@@ -180,3 +274,9 @@ class DataService:
         
         logging.info(f"Validated S3 files: {len(valid_uris)} exist, {len(missing_uris)} missing")
         return valid_uris
+
+    def cleanup(self):
+        """Clean up resources, including HandIndexQuerier connection."""
+        if self.hand_querier:
+            self.hand_querier.close()
+            self.hand_querier = None

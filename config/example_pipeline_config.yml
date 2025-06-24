@@ -17,6 +17,11 @@ mock_data_paths:
   polygon_data_file: "/home/dylan.lee/autoeval-coordinator/mock_data/mock_polygons.json" #local path to mock_data dir
   forecast_csv: "s3://fimc-data/benchmark/ripple_fim_30/nwm_return_period_flows_10_yr_cms.csv" #s3 path to a flowfile with discharge in CMS
 
+hand_index:
+  partitioned_base_path: "s3://fimc-data/autoeval/hand_output_indices/PI3_uat_and_alpha_domain_3m_wbt/"  
+  overlap_threshold_percent: 40.0
+  enabled: false  # true enables real hand index queries
+
 defaults:
   gdal_cache_max: 1024  
   fim_type: "extent"
