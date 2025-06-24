@@ -1,11 +1,12 @@
-import logging
 import asyncio
-from typing import Any, Dict, List
 import json
+import logging
+from typing import Any, Dict, List
+
 from pydantic import BaseModel, field_serializer
 
-from nomad_api import NomadApiClient
 from job_monitor import NomadJobMonitor
+from nomad_api import NomadApiClient
 
 
 class DispatchMetaBase(BaseModel):
@@ -39,7 +40,8 @@ class MosaicDispatchMeta(DispatchMetaBase):
 
     @field_serializer("raster_paths", mode="plain")
     def _ser_raster(self, v: List[str], info):
-        return json.dumps(v)
+        # mosaic.py expects space-separated paths
+        return " ".join(v)
 
 
 class NomadService:
