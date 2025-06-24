@@ -46,9 +46,10 @@ job "hand_inundator" {
         command = "python3"
         args = [
           "/deploy/hand_inundator/inundate.py",
-          "--catchment-data", "${NOMAD_META_catchment_data_path}",
-          "--forecast-path", "${NOMAD_META_forecast_path}",
-          "--output-path", "${NOMAD_META_output_path}",
+          "--catchment_data_path", "${NOMAD_META_catchment_data_path}",
+          "--forecast_path", "${NOMAD_META_forecast_path}",
+          "--fim_output_path", "${NOMAD_META_output_path}",
+          "--fim_type", "${NOMAD_META_fim_type}",
         ]
 
         logging {
