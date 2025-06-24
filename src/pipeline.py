@@ -70,10 +70,20 @@ class PolygonPipeline:
             for catch_id, info in self.catchments.items():
                 tg.create_task(self._process_catchment(catch_id, info, inund_outputs))
 
+        # 2.5) Validate S3 outputs before mosaicking
+        valid_outputs = await self.data_svc.validate_s3_files(inund_outputs)
+        if not valid_outputs:
+            raise RuntimeError(f"[{self.pipeline_id}] No valid inundation outputs found for mosaicking")
+        
+        if len(valid_outputs) < len(inund_outputs):
+            logging.info(
+                f"[{self.pipeline_id}] Only {len(valid_outputs)}/{len(inund_outputs)} inundation outputs are valid"
+            )
+
         # 3) Dispatch & await mosaicker
         mosaic_meta = MosaicDispatchMeta(
             pipeline_id=self.pipeline_id,
-            raster_paths=inund_outputs,
+            raster_paths=valid_outputs,
             output_path=(
                 f"s3://{self.config.s3.bucket}"
                 f"/{self.config.s3.base_prefix}"
@@ -101,7 +111,7 @@ class PolygonPipeline:
         collector: List[str],
     ) -> None:
         """
-        1) write JSON to S3
+        1) copy parquet file to S3 if needed
         2) dispatch inundator
         3) await its output
         """
@@ -110,9 +120,19 @@ class PolygonPipeline:
             f"/{self.config.s3.base_prefix}"
             f"/pipeline_{self.pipeline_id}/catchment_{catch_id}"
         )
+        
+        # Get the local parquet path from info
+        local_parquet_path = info.get("parquet_path")
+        if not local_parquet_path:
+            raise ValueError(f"No parquet_path found for catchment {catch_id}")
+        
+        # Copy parquet to S3 if it's local
+        s3_parquet_path = f"{base}/catchment_data.parquet"
+        parquet_path = await self.data_svc.copy_file_to_uri(local_parquet_path, s3_parquet_path)
+        
         meta = InundationDispatchMeta(
             pipeline_id=self.pipeline_id,
-            catchment_data_path=f"{base}/catchment_data.json",
+            catchment_data_path=parquet_path,
             forecast_path=self.config.mock_data_paths.forecast_csv,
             output_path=f"{base}/inundation_output.tif",
             fim_type=self.config.defaults.fim_type,
@@ -122,13 +142,12 @@ class PolygonPipeline:
             aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
             aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
         )
-        # a) write JSON
-        await self.data_svc.write_json_to_uri(info, meta.catchment_data_path)
+        
         logging.info(
-            "[%s/%s] wrote catchment JSON → %s",
+            "[%s/%s] using catchment parquet → %s",
             self.pipeline_id,
             catch_id,
-            meta.catchment_data_path,
+            parquet_path,
         )
 
         # b) dispatch & await
