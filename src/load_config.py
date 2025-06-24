@@ -1,13 +1,16 @@
 import logging
+import os
+from typing import Any, Dict, Literal, Optional
+
 import yaml
-from typing import Optional, Dict, Any, Literal
+from dotenv import load_dotenv
 from pydantic import (
+    AnyHttpUrl,
     BaseModel,
     Field,
     HttpUrl,
     ValidationError,
     field_validator,
-    AnyHttpUrl,
 )
 
 # --- Configuration Models ---
@@ -17,9 +20,7 @@ class NomadConfig(BaseModel):
     address: AnyHttpUrl = Field(..., examples=["http://127.0.0.1:4646"])
     token: Optional[str] = None
     namespace: str = "*"
-    registry_token: Optional[str] = Field(
-        None, description="Token for Docker private registry authentication"
-    )
+    registry_token: Optional[str] = Field(None, description="Token for Docker private registry authentication")
 
 
 class JobNames(BaseModel):
@@ -30,10 +31,10 @@ class JobNames(BaseModel):
 class S3Config(BaseModel):
     bucket: str = Field(..., min_length=3, examples=["your-fim-data-bucket"])
     base_prefix: str = "pipeline-runs"
-    # AWS credentials
-    AWS_ACCESS_KEY_ID: Optional[str] = None
-    AWS_SECRET_ACCESS_KEY: Optional[str] = None
-    AWS_SESSION_TOKEN: Optional[str] = None
+    # AWS credentials - loaded from .env file
+    AWS_ACCESS_KEY_ID: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_ACCESS_KEY_ID"))
+    AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_SECRET_ACCESS_KEY"))
+    AWS_SESSION_TOKEN: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_SESSION_TOKEN"))
     # Optional: Add transport_params for smart_open/aiobotocore if needed
     # e.g., region_name, profile_name for specific AWS config
     transport_params: Optional[Dict[str, Any]] = None
@@ -46,14 +47,10 @@ class MockDataPaths(BaseModel):
 
 
 class Defaults(BaseModel):
-    gdal_cache_max: int = Field(
-        512, gt=0, description="GDAL cache size in MB for all jobs"
-    )
+    gdal_cache_max: int = Field(512, gt=0, description="GDAL cache size in MB for all jobs")
     fim_type: Literal["extent", "depth"] = "extent"
     # Removed geo_mem_cache_inundator, geo_mem_cache_mosaicker, and mosaic_resolution
-    http_connection_limit: int = Field(
-        10, gt=0, description="Max concurrent outgoing HTTP connections"
-    )
+    http_connection_limit: int = Field(10, gt=0, description="Max concurrent outgoing HTTP connections")
 
 
 class AppConfig(BaseModel):
@@ -70,6 +67,7 @@ class AppConfig(BaseModel):
 def load_config(path: str = "config.yaml") -> AppConfig:
     """
     Loads, parses, and validates the application configuration from a YAML file.
+    Also loads environment variables from .env file for AWS credentials.
 
     Args:
         path: The path to the configuration YAML file.
@@ -84,6 +82,8 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         ValidationError: If the configuration data fails Pydantic validation.
         Exception: For other unexpected errors during loading.
     """
+    load_dotenv(override=True)
+
     try:
         with open(path, "r") as f:
             raw_config = yaml.safe_load(f)
@@ -106,9 +106,7 @@ def load_config(path: str = "config.yaml") -> AppConfig:
         logging.error(f"Configuration validation failed for {path}:")
         for error in error_details:
             loc = " -> ".join(map(str, error["loc"]))
-            logging.error(
-                f"  - Field: '{loc}' - {error['msg']} (value: {error.get('input')})"
-            )
+            logging.error(f"  - Field: '{loc}' - {error['msg']} (value: {error.get('input')})")
         raise  # Re-raise the validation error
     except Exception as e:
         logging.error(f"Unexpected error loading config from {path}: {e}")

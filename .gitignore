@@ -4,3 +4,6 @@ pipeline_config.yml
 config/pipeline_config.yml
 config/local_pipeline_config.yml
 mock_data/
+simple-eval-pipeline/
+autoeval-jobs/
+.env
