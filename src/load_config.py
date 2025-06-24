@@ -46,6 +46,12 @@ class MockDataPaths(BaseModel):
     forecast_csv: str = "s3path/to/flowfile.csv"
 
 
+class HandIndexConfig(BaseModel):
+    partitioned_base_path: str = Field(..., description="Base path to partitioned parquet files (local or s3://)")
+    overlap_threshold_percent: float = Field(10.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a catchment")
+    enabled: bool = Field(True, description="Whether to use real hand index queries (True) or mock data (False)")
+
+
 class Defaults(BaseModel):
     gdal_cache_max: int = Field(512, gt=0, description="GDAL cache size in MB for all jobs")
     fim_type: Literal["extent", "depth"] = "extent"
@@ -58,6 +64,7 @@ class AppConfig(BaseModel):
     jobs: JobNames
     s3: S3Config
     mock_data_paths: MockDataPaths
+    hand_index: HandIndexConfig
     defaults: Defaults = Field(default_factory=Defaults)
 
 
