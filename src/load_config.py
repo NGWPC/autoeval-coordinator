@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Any, Dict, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import yaml
 from dotenv import load_dotenv
@@ -43,13 +43,25 @@ class S3Config(BaseModel):
 class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
     polygon_data_file: str = "mock_polygons.json"  # Path to polygon data
-    forecast_csv: str = "s3path/to/flowfile.csv"
+    mock_stac_results: Optional[str] = Field(None, description="Path to mock STAC query results JSON")
 
 
 class HandIndexConfig(BaseModel):
     partitioned_base_path: str = Field(..., description="Base path to partitioned parquet files (local or s3://)")
     overlap_threshold_percent: float = Field(10.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a catchment")
     enabled: bool = Field(True, description="Whether to use real hand index queries (True) or mock data (False)")
+
+
+class StacConfig(BaseModel):
+    api_url: str = Field(..., description="STAC API root URL")
+    collections: List[str] = Field(..., description="List of STAC collection IDs to query")
+    overlap_threshold_percent: float = Field(40.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a STAC item")
+    datetime_filter: Optional[str] = Field(None, description="STAC datetime or interval filter")
+    enabled: bool = Field(True, description="Whether to use STAC queries for flow scenarios")
+
+
+class FlowScenarioConfig(BaseModel):
+    output_dir: str = Field("combined_flowfiles", description="Directory to save combined flowfiles")
 
 
 class Defaults(BaseModel):
@@ -65,6 +77,8 @@ class AppConfig(BaseModel):
     s3: S3Config
     mock_data_paths: MockDataPaths
     hand_index: HandIndexConfig
+    stac: Optional[StacConfig] = Field(None, description="STAC API configuration")
+    flow_scenarios: Optional[FlowScenarioConfig] = Field(None, description="Flow scenario processing configuration")
     defaults: Defaults = Field(default_factory=Defaults)
 
 
