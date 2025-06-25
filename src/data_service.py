@@ -119,8 +119,10 @@ class DataService:
         """
         polygon_id = polygon_data.get("polygon_id", "unknown")
         
-        # Check if we should use mock STAC data
-        if self.config.mock_data_paths.mock_stac_results and Path(self.config.mock_data_paths.mock_stac_results).exists():
+        # Check if we should use mock STAC data (only if STAC is disabled)
+        if (not self.stac_querier or not self.config.stac or not self.config.stac.enabled) and \
+           self.config.mock_data_paths.mock_stac_results and \
+           Path(self.config.mock_data_paths.mock_stac_results).exists():
             logging.info(f"Using mock STAC results from {self.config.mock_data_paths.mock_stac_results}")
             try:
                 with open(self.config.mock_data_paths.mock_stac_results, 'r') as f:
