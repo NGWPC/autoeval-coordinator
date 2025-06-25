@@ -14,6 +14,8 @@ from shapely.geometry import shape
 
 from load_config import AppConfig
 from hand_index_querier import HandIndexQuerier
+from stac_querier import StacQuerier
+from flowfile_combiner import FlowfileCombiner
 
 
 class DataService:
@@ -33,6 +35,21 @@ class DataService:
                 partitioned_base_path=config.hand_index.partitioned_base_path,
                 overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
             )
+        
+        # Initialize StacQuerier if enabled
+        self.stac_querier = None
+        if config.stac and config.stac.enabled:
+            self.stac_querier = StacQuerier(
+                api_url=config.stac.api_url,
+                collections=config.stac.collections,
+                overlap_threshold_percent=config.stac.overlap_threshold_percent,
+                datetime_filter=config.stac.datetime_filter,
+            )
+        
+        # Initialize FlowfileCombiner (always needed for processing STAC results)
+        self.flowfile_combiner = FlowfileCombiner(
+            output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
+        )
 
     async def _load_parquet_file_list(self) -> List[str]:
         """Load list of parquet files from the mock data directory."""
@@ -89,6 +106,107 @@ class DataService:
         )
         
         return gdf
+
+    async def query_stac_for_flow_scenarios(self, polygon_data: Dict[str, Any]) -> Dict:
+        """
+        Query STAC API for flow scenarios based on polygon.
+        
+        Args:
+            polygon_data: Dictionary containing polygon information
+            
+        Returns:
+            Dictionary with STAC query results and combined flowfiles
+        """
+        polygon_id = polygon_data.get("polygon_id", "unknown")
+        
+        # Check if we should use mock STAC data
+        if self.config.mock_data_paths.mock_stac_results and Path(self.config.mock_data_paths.mock_stac_results).exists():
+            logging.info(f"Using mock STAC results from {self.config.mock_data_paths.mock_stac_results}")
+            try:
+                with open(self.config.mock_data_paths.mock_stac_results, 'r') as f:
+                    stac_results = json.load(f)
+                
+                # Process flowfiles from STAC results
+                combined_flowfiles = {}
+                if self.flowfile_combiner:
+                    logging.info(f"Processing flowfiles for {len(stac_results)} collections")
+                    
+                    # Create temporary directory for this polygon's combined flowfiles
+                    temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
+                    Path(temp_dir).mkdir(parents=True, exist_ok=True)
+                    
+                    loop = asyncio.get_running_loop()
+                    combined_flowfiles = await loop.run_in_executor(
+                        None,
+                        self.flowfile_combiner.process_stac_query_results,
+                        stac_results,
+                        temp_dir,
+                    )
+                    
+                    logging.info(f"Combined flowfiles created for polygon {polygon_id}")
+                
+                return {
+                    "scenarios": stac_results,
+                    "combined_flowfiles": combined_flowfiles,
+                    "stac_enabled": False,  # Indicate we used mock data
+                    "polygon_id": polygon_id,
+                    "mock_data": True,
+                }
+            except Exception as e:
+                logging.error(f"Error loading mock STAC results: {e}")
+                # Fall through to real STAC query or disabled state
+        
+        if not self.stac_querier or not self.config.stac or not self.config.stac.enabled:
+            logging.info("STAC querying is disabled")
+            return {"scenarios": {}, "stac_enabled": False}
+        
+        logging.info(f"Querying STAC for flow scenarios for polygon: {polygon_id}")
+        
+        try:
+            # Convert polygon data to GeoDataFrame
+            polygon_gdf = self._polygon_dict_to_geodataframe(polygon_data)
+            
+            # Run STAC query in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            stac_results = await loop.run_in_executor(
+                None,
+                self.stac_querier.query_stac_for_polygon,
+                polygon_gdf,
+                None,  # roi_geojson not needed since we have polygon_gdf
+            )
+            
+            if not stac_results:
+                logging.info(f"No STAC results found for polygon {polygon_id}")
+                return {"scenarios": {}, "stac_enabled": True}
+            
+            # Process flowfiles from STAC results
+            combined_flowfiles = {}
+            if self.flowfile_combiner:
+                logging.info(f"Processing flowfiles for {len(stac_results)} collections")
+                
+                # Create temporary directory for this polygon's combined flowfiles
+                temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
+                Path(temp_dir).mkdir(parents=True, exist_ok=True)
+                
+                combined_flowfiles = await loop.run_in_executor(
+                    None,
+                    self.flowfile_combiner.process_stac_query_results,
+                    stac_results,
+                    temp_dir,
+                )
+                
+                logging.info(f"Combined flowfiles created for polygon {polygon_id}")
+            
+            return {
+                "scenarios": stac_results,
+                "combined_flowfiles": combined_flowfiles,
+                "stac_enabled": True,
+                "polygon_id": polygon_id,
+            }
+            
+        except Exception as e:
+            logging.error(f"Error in STAC query for polygon {polygon_id}: {e}")
+            return {"scenarios": {}, "stac_enabled": True, "error": str(e)}
 
     async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
         """
