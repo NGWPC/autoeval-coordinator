@@ -24,6 +24,7 @@ class ScenarioResult(BaseModel):
     scenario_name: str
     flowfile_path: str
     mosaic_output: str
+    benchmark_mosaic_output: str
 
 
 class Result(BaseModel):
@@ -55,6 +56,7 @@ class PolygonPipeline:
         # Populated by initialize()
         self.catchments: Dict[str, Dict[str, Any]] = {}
         self.flow_scenarios: Dict[str, Dict[str, str]] = {}
+        self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
@@ -63,6 +65,22 @@ class PolygonPipeline:
             logger.info(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
             stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon)
             self.flow_scenarios = stac_data.get("combined_flowfiles", {})
+
+            # Extract benchmark rasters from STAC scenarios
+            raw_scenarios = stac_data.get("scenarios", {})
+            self.benchmark_scenarios = {}
+            for collection, scenarios in raw_scenarios.items():
+                self.benchmark_scenarios[collection] = {}
+                for scenario_name, scenario_data in scenarios.items():
+                    # Find extent key (could be extent_raster, extent, etc.)
+                    extent_key = None
+                    for key in scenario_data.keys():
+                        if "extent" in key.lower():
+                            extent_key = key
+                            break
+                    self.benchmark_scenarios[collection][scenario_name] = (
+                        scenario_data.get(extent_key, []) if extent_key else []
+                    )
 
             if self.flow_scenarios:
                 logger.info(
@@ -92,16 +110,19 @@ class PolygonPipeline:
         await self.initialize()
 
         # Build scenario list
-        scenarios = [
-            {
-                "scenario_id": f"{self.pipeline_id}-{collection}-{scenario}-{i+1}",
-                "collection_name": collection,
-                "scenario_name": scenario,
-                "flowfile_path": flowfile_path,
-            }
-            for i, (collection, flows) in enumerate(self.flow_scenarios.items())
-            for scenario, flowfile_path in flows.items()
-        ]
+        scenarios = []
+        for i, (collection, flows) in enumerate(self.flow_scenarios.items()):
+            for scenario, flowfile_path in flows.items():
+                benchmark_rasters = self.benchmark_scenarios.get(collection, {}).get(scenario, [])
+                scenarios.append(
+                    {
+                        "scenario_id": f"{self.pipeline_id}-{collection}-{scenario}-{i+1}",
+                        "collection_name": collection,
+                        "scenario_name": scenario,
+                        "flowfile_path": flowfile_path,
+                        "benchmark_rasters": benchmark_rasters,
+                    }
+                )
 
         logger.info(f"[{self.pipeline_id}] Processing {len(scenarios)} scenarios with stage-based parallelism")
 
@@ -166,63 +187,103 @@ class PolygonPipeline:
     ) -> List[ScenarioResult]:
         """Run mosaic jobs for scenarios with valid outputs."""
         # Create mosaic tasks for scenarios with valid outputs
-        mosaic_tasks = []
+        hand_mosaic_tasks = []
+        benchmark_mosaic_tasks = []
         valid_scenarios = []
 
         for scenario in scenarios:
             scenario_id = scenario["scenario_id"]
             valid_outputs = inundation_results.get(scenario_id, [])
+            benchmark_rasters = scenario.get("benchmark_rasters", [])
 
             if not valid_outputs:
                 logger.warning(f"[{scenario_id}] Skipping mosaic - no valid inundation outputs")
                 continue
 
-            logger.info(f"[{scenario_id}] Creating mosaic task with {len(valid_outputs)} inundation outputs")
+            if not benchmark_rasters:
+                logger.warning(f"[{scenario_id}] Skipping benchmark mosaic - no benchmark rasters")
+                continue
 
-            output_path = (
+            logger.info(f"[{scenario_id}] Creating HAND mosaic task with {len(valid_outputs)} inundation outputs")
+            logger.info(
+                f"[{scenario_id}] Creating benchmark mosaic task with {len(benchmark_rasters)} benchmark rasters"
+            )
+
+            # HAND mosaic task
+            hand_output_path = (
                 f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/HAND_mosaic.tif"
             )
-
-            meta = self._create_mosaic_meta(scenario_id, valid_outputs, output_path)
-
-            task = asyncio.create_task(
+            hand_meta = self._create_mosaic_meta(scenario_id, valid_outputs, hand_output_path)
+            hand_task = asyncio.create_task(
                 self.nomad.run_job(
                     self.config.jobs.fim_mosaicker,
-                    instance_prefix=f"mosaic-{scenario_id[:16]}",
-                    meta=meta.model_dump(),
+                    instance_prefix=f"hand-mosaic-{scenario_id[:12]}",
+                    meta=hand_meta.model_dump(),
                 )
             )
-            mosaic_tasks.append(task)
+            hand_mosaic_tasks.append(hand_task)
+
+            # Benchmark mosaic task
+            benchmark_output_path = (
+                f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
+                f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/benchmark_mosaic.tif"
+            )
+            benchmark_meta = self._create_mosaic_meta(
+                f"{scenario_id}-benchmark", benchmark_rasters, benchmark_output_path
+            )
+            benchmark_task = asyncio.create_task(
+                self.nomad.run_job(
+                    self.config.jobs.fim_mosaicker,
+                    instance_prefix=f"bench-mosaic-{scenario_id[:12]}",
+                    meta=benchmark_meta.model_dump(),
+                )
+            )
+            benchmark_mosaic_tasks.append(benchmark_task)
             valid_scenarios.append(scenario)
 
-        if not mosaic_tasks:
+        if not hand_mosaic_tasks:
             logger.warning(f"[{self.pipeline_id}] No mosaic jobs to submit - all scenarios failed inundation")
             return []
 
-        logger.info(f"[{self.pipeline_id}] Submitting {len(mosaic_tasks)} mosaic jobs")
+        total_mosaic_jobs = len(hand_mosaic_tasks) + len(benchmark_mosaic_tasks)
+        logger.info(
+            f"[{self.pipeline_id}] Submitting {total_mosaic_jobs} mosaic jobs ({len(hand_mosaic_tasks)} HAND, {len(benchmark_mosaic_tasks)} benchmark)"
+        )
 
         # Wait for all mosaic tasks
-        mosaic_results = await asyncio.gather(*mosaic_tasks, return_exceptions=True)
+        hand_results = await asyncio.gather(*hand_mosaic_tasks, return_exceptions=True)
+        benchmark_results = await asyncio.gather(*benchmark_mosaic_tasks, return_exceptions=True)
 
         # Build results
         scenario_results = []
-        for result, scenario in zip(mosaic_results, valid_scenarios):
+        for hand_result, benchmark_result, scenario in zip(hand_results, benchmark_results, valid_scenarios):
             scenario_id = scenario["scenario_id"]
 
-            if isinstance(result, Exception):
-                logger.error(f"[{scenario_id}] Mosaic failed: {result}")
-            else:
-                logger.info(f"[{scenario_id}] Scenario complete → {result}")
+            # Check if both mosaics succeeded
+            hand_failed = isinstance(hand_result, Exception)
+            benchmark_failed = isinstance(benchmark_result, Exception)
+
+            if hand_failed:
+                logger.error(f"[{scenario_id}] HAND mosaic failed: {hand_result}")
+            if benchmark_failed:
+                logger.error(f"[{scenario_id}] Benchmark mosaic failed: {benchmark_result}")
+
+            # Only create result if both mosaics succeeded
+            if not hand_failed and not benchmark_failed:
+                logger.info(f"[{scenario_id}] Scenario complete → HAND: {hand_result}, Benchmark: {benchmark_result}")
                 scenario_results.append(
                     ScenarioResult(
                         scenario_id=scenario_id,
                         collection_name=scenario["collection_name"],
                         scenario_name=scenario["scenario_name"],
                         flowfile_path=scenario["flowfile_path"],
-                        mosaic_output=result,
+                        mosaic_output=hand_result,
+                        benchmark_mosaic_output=benchmark_result,
                     )
                 )
+            else:
+                logger.warning(f"[{scenario_id}] Scenario failed - one or both mosaics failed")
 
         logger.info(
             f"[{self.pipeline_id}] Pipeline complete: {len(scenario_results)}/{len(scenarios)} scenarios succeeded"
