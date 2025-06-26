@@ -111,7 +111,13 @@ class NomadJobMonitor:
                 # Update database with job status
                 if self._log_db and ctx.pipeline_id:
                     mapped_status = self._map_nomad_status(status)
-                    self._status_updates.append((jid, ctx.pipeline_id, mapped_status))
+                    
+                    # Get existing job record to preserve stage and write_path
+                    existing_job = await self._log_db.get_job_status(jid)
+                    if existing_job:
+                        stage = existing_job["stage"]
+                        write_paths = existing_job["write_paths"]
+                        self._status_updates.append((jid, ctx.pipeline_id, mapped_status, stage, write_paths))
                     
                     # Flush if buffer is getting large
                     if len(self._status_updates) >= 50:

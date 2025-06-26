@@ -77,7 +77,7 @@ class WbdConfig(BaseModel):
 
 class Defaults(BaseModel):
     fim_type: Literal["extent", "depth"] = "extent"
-    http_connection_limit: int = Field(10, gt=0, description="Max concurrent outgoing HTTP connections")
+    http_connection_limit: int = Field(100, gt=0, description="Max concurrent outgoing HTTP connections")
 
 
 class AppConfig(BaseModel):

@@ -8,3 +8,4 @@ simple-eval-pipeline/
 autoeval-jobs/
 .env
 inputs/
+pipeline_log.db
