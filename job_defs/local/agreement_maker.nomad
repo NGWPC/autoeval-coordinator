@@ -31,7 +31,7 @@ job "agreement_maker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
         force_pull = true
 
         auth {
@@ -70,8 +70,8 @@ job "agreement_maker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Processing Configuration
-        DASK_CLUST_MAX_MEM = "8GB"
-        RASTERIO_CHUNK_SIZE = "2048"
+        DASK_CLUST_MAX_MEM = "12GB"
+        RASTERIO_CHUNK_SIZE = "4096"
         DEFAULT_WRITE_BLOCK_SIZE = "4096"
         COG_BLOCKSIZE = "512"
         COG_OVERVIEW_LEVEL = "4"
@@ -87,8 +87,7 @@ job "agreement_maker" {
       }
 
       resources {
-        cpu    = 2000 # Higher CPU for agreement computation
-        memory = 8192 # Higher memory for large raster processing
+        memory = 12000 # Higher memory for large raster processing
       }
 
       logs {
