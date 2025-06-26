@@ -51,7 +51,7 @@ class DataService:
             output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
         )
 
-    def load_geometry_from_wbd(self, gpkg_path: str, huc_list_path: str, index: int) -> gpd.GeoDataFrame:
+    def load_geometry_from_wbd(self, gpkg_path: str, huc_list_path: str, index: int) -> tuple[gpd.GeoDataFrame, str]:
         """
         Load geometry from WBD National gpkg based on HUC code at given index.
 
@@ -61,7 +61,7 @@ class DataService:
             index: Index of HUC code to use from huc_list.txt
 
         Returns:
-            GeoDataFrame with geometry converted to EPSG:4326
+            Tuple of (GeoDataFrame with geometry converted to EPSG:4326, HUC code)
 
         Raises:
             ValueError: If no polygon found for HUC code
@@ -105,7 +105,7 @@ class DataService:
         if filtered_gdf.crs and filtered_gdf.crs.to_epsg() != 4326:
             filtered_gdf = filtered_gdf.to_crs("EPSG:4326")
 
-        return filtered_gdf
+        return filtered_gdf, huc_code
 
     def load_polygon_gdf_from_file(self, file_path: str) -> gpd.GeoDataFrame:
         """

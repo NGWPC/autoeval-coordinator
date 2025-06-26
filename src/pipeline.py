@@ -9,6 +9,7 @@ import geopandas as gpd
 from pydantic import BaseModel
 
 from data_service import DataService
+from pipeline_log_db import PipelineLogDB
 from load_config import AppConfig
 from nomad_service import (
     AgreementDispatchMeta,
@@ -33,7 +34,6 @@ class ScenarioResult(BaseModel):
 
 class Result(BaseModel):
     pipeline_id: str
-    polygon_id: str
     scenarios: List[ScenarioResult]
     catchment_count: int
     total_scenarios: int
@@ -48,13 +48,20 @@ class PolygonPipeline:
     """
 
     def __init__(
-        self, config: AppConfig, nomad: NomadService, data_svc: DataService, polygon_gdf: gpd.GeoDataFrame, pipeline_id: str
+        self,
+        config: AppConfig,
+        nomad: NomadService,
+        data_svc: DataService,
+        polygon_gdf: gpd.GeoDataFrame,
+        pipeline_id: str,
+        log_db: Optional[PipelineLogDB] = None,
     ):
         self.config = config
         self.nomad = nomad
         self.data_svc = data_svc
         self.polygon_gdf = polygon_gdf
-        self.pipeline_id = pipeline_id
+        self.pipeline_id = pipeline_id  # This is the HUC code
+        self.log_db = log_db
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
 
         # Populated by initialize()
@@ -64,6 +71,9 @@ class PolygonPipeline:
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
+        # Initialize database record if db_manager is available
+        if self.log_db:
+            await self.log_db.create_pipeline_run(self.pipeline_id)
         # Query STAC for flow scenarios
         if (self.config.stac and self.config.stac.enabled) or self.config.mock_data_paths.mock_stac_results:
             logger.info(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
@@ -144,7 +154,6 @@ class PolygonPipeline:
 
         return Result(
             pipeline_id=self.pipeline_id,
-            polygon_id=str(self.pipeline_id),
             scenarios=scenario_results,
             catchment_count=len(self.catchments),
             total_scenarios=len(scenario_results),
@@ -154,6 +163,8 @@ class PolygonPipeline:
         """Run all inundation jobs concurrently and return valid outputs by scenario."""
         # Create all inundation tasks
         tasks = []
+        catchment_jobs = {}  # Track job IDs for database
+
         for scenario in scenarios:
             for catch_id, info in self.catchments.items():
                 output_container = []
@@ -164,6 +175,15 @@ class PolygonPipeline:
 
         # Wait for all tasks
         results = await asyncio.gather(*[t[0] for t in tasks], return_exceptions=True)
+
+        # Collect job IDs for database
+        for (task, output_container, scenario_id, catch_id), result in zip(tasks, results):
+            if not isinstance(result, Exception):
+                catchment_jobs[catch_id] = result
+
+        # Update database with job IDs
+        if catchment_jobs:
+            await self._track_jobs_in_db("inundation", catchment_jobs)
 
         # Group outputs by scenario
         outputs_by_scenario = {}
@@ -195,9 +215,10 @@ class PolygonPipeline:
     ) -> List[Dict[str, Any]]:
         """Run mosaic jobs for scenarios with valid outputs."""
         # Create mosaic tasks for scenarios with valid outputs
-        hand_mosaic_tasks = []
-        benchmark_mosaic_tasks = []
+        hand_tasks = []
+        benchmark_tasks = []
         valid_scenarios = []
+        job_ids = []  # Track job IDs for database
 
         for scenario in scenarios:
             scenario_id = scenario["scenario_id"]
@@ -230,7 +251,7 @@ class PolygonPipeline:
                     meta=hand_meta.model_dump(),
                 )
             )
-            hand_mosaic_tasks.append(hand_task)
+            hand_tasks.append(hand_task)
 
             # Benchmark mosaic task
             benchmark_output_path = (
@@ -247,21 +268,30 @@ class PolygonPipeline:
                     meta=benchmark_meta.model_dump(),
                 )
             )
-            benchmark_mosaic_tasks.append(benchmark_task)
+            benchmark_tasks.append(benchmark_task)
             valid_scenarios.append(scenario)
 
-        if not hand_mosaic_tasks:
+        if not hand_tasks:
             logger.warning(f"[{self.pipeline_id}] No mosaic jobs to submit - all scenarios failed inundation")
             return []
 
-        total_mosaic_jobs = len(hand_mosaic_tasks) + len(benchmark_mosaic_tasks)
+        total_jobs = len(hand_tasks) + len(benchmark_tasks)
         logger.info(
-            f"[{self.pipeline_id}] Submitting {total_mosaic_jobs} mosaic jobs ({len(hand_mosaic_tasks)} HAND, {len(benchmark_mosaic_tasks)} benchmark)"
+            f"[{self.pipeline_id}] Submitting {total_jobs} mosaic jobs ({len(hand_tasks)} HAND, {len(benchmark_tasks)} benchmark)"
         )
 
         # Wait for all mosaic tasks
-        hand_results = await asyncio.gather(*hand_mosaic_tasks, return_exceptions=True)
-        benchmark_results = await asyncio.gather(*benchmark_mosaic_tasks, return_exceptions=True)
+        hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
+        benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
+
+        # Collect successful job IDs for database
+        for result in hand_results + benchmark_results:
+            if not isinstance(result, Exception):
+                job_ids.append(result)
+
+        # Update database with mosaic job IDs
+        if job_ids:
+            await self._track_jobs_in_db("mosaic", job_ids)
 
         # Build intermediate results for agreement stage
         mosaic_results = []
@@ -304,7 +334,9 @@ class PolygonPipeline:
             return []
 
         # Create agreement tasks
-        agreement_tasks = []
+        tasks = []
+        job_ids = []  # Track job IDs for database
+
         for scenario in mosaic_results:
             scenario_id = scenario["scenario_id"]
 
@@ -336,23 +368,30 @@ class PolygonPipeline:
                     meta=meta.model_dump(),
                 )
             )
-            agreement_tasks.append(task)
+            tasks.append(task)
 
-        logger.info(f"[{self.pipeline_id}] Submitting {len(agreement_tasks)} agreement jobs")
+        logger.info(f"[{self.pipeline_id}] Submitting {len(tasks)} agreement jobs")
 
         # Wait for all agreement tasks
-        agreement_results = await asyncio.gather(*agreement_tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Collect successful job IDs for database
+        for result in results:
+            if not isinstance(result, Exception):
+                job_ids.append(result)
+
+        # Update database with agreement job IDs
+        if job_ids:
+            await self._track_jobs_in_db("agreement", job_ids)
 
         # Build final scenario results
         scenario_results = []
-        for agreement_result, scenario in zip(agreement_results, mosaic_results):
+        for result, scenario in zip(results, mosaic_results):
             scenario_id = scenario["scenario_id"]
 
             # Check if agreement job succeeded
-            agreement_failed = isinstance(agreement_result, Exception)
-
-            if agreement_failed:
-                logger.error(f"[{scenario_id}] Agreement job failed: {agreement_result}")
+            if isinstance(result, Exception):
+                logger.error(f"[{scenario_id}] Agreement job failed: {result}")
                 continue
 
             # Construct metrics path (same pattern as agreement output)
@@ -361,7 +400,7 @@ class PolygonPipeline:
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/agreement_metrics.csv"
             )
 
-            logger.info(f"[{scenario_id}] Pipeline complete → Agreement: {agreement_result}")
+            logger.info(f"[{scenario_id}] Pipeline complete → Agreement: {result}")
             scenario_results.append(
                 ScenarioResult(
                     scenario_id=scenario_id,
@@ -370,7 +409,7 @@ class PolygonPipeline:
                     flowfile_path=scenario["flowfile_path"],
                     mosaic_output=scenario["mosaic_output"],
                     benchmark_mosaic_output=scenario["benchmark_mosaic_output"],
-                    agreement_output=agreement_result,
+                    agreement_output=result,
                     agreement_metrics_path=metrics_path,
                 )
             )
@@ -380,10 +419,42 @@ class PolygonPipeline:
         )
         return scenario_results
 
+    async def _track_jobs_in_db(self, job_type: str, job_data: Union[Dict[str, str], List[str]]) -> None:
+        """Helper method to update job tracking in database."""
+        if not self.log_db:
+            return
+
+        if job_type == "inundation":
+            await self.log_db.update_inundation_jobs(self.pipeline_id, job_data)
+            # Track individual job statuses
+            job_updates = [(job_id, self.pipeline_id, "dispatched") for job_id in job_data.values()]
+        elif job_type == "mosaic":
+            await self.log_db.update_mosaic_jobs(self.pipeline_id, job_data)
+            # Track individual job statuses
+            job_updates = [(job_id, self.pipeline_id, "dispatched") for job_id in job_data]
+        elif job_type == "agreement":
+            await self.log_db.update_agreement_jobs(self.pipeline_id, job_data)
+            # Track individual job statuses
+            job_updates = [(job_id, self.pipeline_id, "dispatched") for job_id in job_data]
+        else:
+            return
+
+        # Batch update job statuses
+        if job_updates:
+            await self.log_db.batch_update_job_status(job_updates)
+
     async def _process_catchment(
-        self, scenario: Dict[str, Any], catch_id: str, catchment_info: Dict[str, Any], collector: List[str]
-    ) -> None:
-        """Process a single catchment for a scenario."""
+        self,
+        scenario: Dict[str, Any],
+        catch_id: str,
+        catchment_info: Dict[str, Any],
+        collector: List[str],
+    ) -> str:
+        """Process a single catchment for a scenario.
+
+        Returns:
+            Job ID of the submitted nomad job
+        """
         scenario_id = scenario["scenario_id"]
         flowfile_path = scenario["flowfile_path"]
 
@@ -409,13 +480,14 @@ class PolygonPipeline:
             scenario_id, parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
         )
 
-        output = await self.nomad.run_job(
+        job_id = await self.nomad.run_job(
             self.config.jobs.hand_inundator,
             instance_prefix=f"inund-{scenario_id[:12]}-{str(catch_id)[:8]}",
             meta=meta.model_dump(),
         )
-        collector.append(output)
-        logger.debug(f"[{scenario_id}/{catch_id}] inundator done → {output}")
+        collector.append(job_id)
+        logger.debug(f"[{scenario_id}/{catch_id}] inundator done → {job_id}")
+        return job_id
 
     def _create_inundation_meta(
         self, pipeline_id: str, catchment_path: str, forecast_path: str, output_path: str
@@ -482,7 +554,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument("--index", type=int, default=0, help="Which HUC index in the list to process")
-    parser.add_argument("--use-mock-polygon", action="store_true", help="Use polygon from mock data file instead of WBD")
+    parser.add_argument(
+        "--use-mock-polygon", action="store_true", help="Use polygon from mock data file instead of WBD"
+    )
     parser.add_argument(
         "--config", default=os.path.join("config", "pipeline_config.yml"), help="Path to your YAML config"
     )
@@ -500,34 +574,45 @@ if __name__ == "__main__":
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
             api = NomadApiClient(cfg, session)
-            monitor = NomadJobMonitor(api)
+
+            # Initialize database manager
+            log_db = PipelineLogDB("pipeline_log.db")
+            await log_db.initialize()
+
+            monitor = NomadJobMonitor(api, log_db)
             await monitor.start()
             nomad = NomadService(api, monitor)
 
             data_svc = DataService(cfg)
-            pid = str(args.index)
-            
+
             # Load geometry - either from WBD or mock data
             if args.use_mock_polygon:
                 logging.info("Using polygon from mock data file")
                 polygon_gdf = data_svc.load_polygon_gdf_from_file(cfg.mock_data_paths.polygon_data_file)
+                # Use HUC code from config for mock data
+                huc_code = cfg.mock_data_paths.huc or f"mock_{args.index}"
+                pid = huc_code
             else:
                 logging.info("Using polygon from WBD National gpkg")
-                polygon_gdf = data_svc.load_geometry_from_wbd(
-                    cfg.wbd.gpkg_path, 
-                    cfg.wbd.huc_list_path, 
-                    args.index
+                polygon_gdf, huc_code = data_svc.load_geometry_from_wbd(
+                    cfg.wbd.gpkg_path, cfg.wbd.huc_list_path, args.index
                 )
-            
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pid)
+                pid = huc_code
+
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pid, log_db)
 
             try:
                 result = await pipeline.run()
                 data = result.model_dump()
+                
+                # Save results to database
+                await log_db.save_pipeline_results(data)
+                
                 print(json.dumps(data, indent=2))
             finally:
                 await pipeline.cleanup()
                 await monitor.stop()
+                await log_db.close()
                 data_svc.cleanup()
 
     asyncio.run(_main())
