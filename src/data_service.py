@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import geopandas as gpd
-import smart_open  # Import smart_open
+import fsspec
 from botocore.exceptions import ClientError, NoCredentialsError
 from shapely.geometry import shape
 
@@ -19,14 +19,20 @@ from stac_querier import StacQuerier
 
 
 class DataService:
-    """Service to query data sources and interact with S3 via smart_open."""
+    """Service to query data sources and interact with S3 via fsspec."""
 
     def __init__(self, config: AppConfig):
         self.config = config
         self.mock_data_path = config.mock_data_paths.mock_catchment_data
         self._cached_parquet_files = None
-        # Optional: configure transport params for smart_open if needed
-        self._transport_params = None  # E.g. config.s3.transport_params
+        # Configure S3 filesystem options from environment
+        self._s3_options = {}
+        if config.s3.AWS_ACCESS_KEY_ID:
+            self._s3_options['key'] = config.s3.AWS_ACCESS_KEY_ID
+        if config.s3.AWS_SECRET_ACCESS_KEY:
+            self._s3_options['secret'] = config.s3.AWS_SECRET_ACCESS_KEY
+        if config.s3.AWS_SESSION_TOKEN:
+            self._s3_options['token'] = config.s3.AWS_SESSION_TOKEN
 
         # Initialize HandIndexQuerier if enabled
         self.hand_querier = None
@@ -351,7 +357,7 @@ class DataService:
         return {"catchments": catchments, "hand_version": "mock_data"}
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
-        """Copies a file (e.g., parquet) to a URI (local or S3) using smart_open.
+        """Copies a file (e.g., parquet) to a URI (local or S3) using fsspec.
         Only copies if source is local and destination is S3."""
 
         # Only copy if source is local and destination is S3
@@ -377,10 +383,16 @@ class DataService:
             return source_path
 
     def _sync_copy_file(self, source_path: str, dest_uri: str):
-        """Synchronous helper for copying files using smart_open."""
-        transport_params = self._transport_params
-        with open(source_path, "rb") as src:
-            with smart_open.open(dest_uri, "wb", transport_params=transport_params) as dst:
+        """Synchronous helper for copying files using fsspec."""
+        # Create filesystem based on destination URI
+        if dest_uri.startswith('s3://'):
+            fs = fsspec.filesystem('s3', **self._s3_options)
+        else:
+            fs = fsspec.filesystem('file')
+        
+        # Copy file using fsspec
+        with open(source_path, 'rb') as src:
+            with fs.open(dest_uri, 'wb') as dst:
                 dst.write(src.read())
 
     async def check_s3_file_exists(self, s3_uri: str) -> bool:
@@ -406,10 +418,8 @@ class DataService:
     def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
         """Synchronous helper to check if S3 file exists."""
         try:
-            with smart_open.open(s3_uri, "rb", transport_params=self._transport_params) as f:
-                # Try to read a single byte to confirm file exists and is readable
-                f.read(1)
-            return True
+            fs = fsspec.filesystem('s3', **self._s3_options)
+            return fs.exists(s3_uri)
         except (FileNotFoundError, NoCredentialsError, ClientError) as e:
             logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")
             return False
