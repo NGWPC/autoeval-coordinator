@@ -36,9 +36,9 @@ class S3Config(BaseModel):
     AWS_ACCESS_KEY_ID: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_ACCESS_KEY_ID"))
     AWS_SECRET_ACCESS_KEY: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_SECRET_ACCESS_KEY"))
     AWS_SESSION_TOKEN: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_SESSION_TOKEN"))
-    # Optional: Add transport_params for smart_open/aiobotocore if needed
-    # e.g., region_name, profile_name for specific AWS config
-    transport_params: Optional[Dict[str, Any]] = None
+    # Optional: Add additional S3 options if needed
+    # e.g., region_name, endpoint_url for specific AWS config
+    s3_options: Optional[Dict[str, Any]] = None
 
 
 class MockDataPaths(BaseModel):
