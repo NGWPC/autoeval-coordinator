@@ -45,6 +45,7 @@ class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
     polygon_data_file: str = Field(..., description="Path to polygon GeoDataFrame file (gpkg format)")
     mock_stac_results: Optional[str] = Field(None, description="Path to mock STAC query results JSON")
+    huc: Optional[str] = Field(None, description="HUC code for mock polygon data")
 
 
 class HandIndexConfig(BaseModel):
