@@ -7,3 +7,4 @@ mock_data/
 simple-eval-pipeline/
 autoeval-jobs/
 .env
+inputs/
