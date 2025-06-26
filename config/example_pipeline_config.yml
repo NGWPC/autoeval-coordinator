@@ -7,6 +7,7 @@ nomad:
 jobs:
   hand_inundator: "hand_inundator" 
   fim_mosaicker: "fim_mosaicker"      
+  agreement_maker: "agreement_maker"
 
 s3:
   bucket: "fimc-data" 
