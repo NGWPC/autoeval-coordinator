@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
+import geopandas as gpd
 from pydantic import BaseModel
 
 from data_service import DataService
@@ -47,12 +48,12 @@ class PolygonPipeline:
     """
 
     def __init__(
-        self, config: AppConfig, nomad: NomadService, data_svc: DataService, polygon: Dict[str, Any], pipeline_id: str
+        self, config: AppConfig, nomad: NomadService, data_svc: DataService, polygon_gdf: gpd.GeoDataFrame, pipeline_id: str
     ):
         self.config = config
         self.nomad = nomad
         self.data_svc = data_svc
-        self.polygon = polygon
+        self.polygon_gdf = polygon_gdf
         self.pipeline_id = pipeline_id
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
 
@@ -66,7 +67,7 @@ class PolygonPipeline:
         # Query STAC for flow scenarios
         if (self.config.stac and self.config.stac.enabled) or self.config.mock_data_paths.mock_stac_results:
             logger.info(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
-            stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon)
+            stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon_gdf)
             self.flow_scenarios = stac_data.get("combined_flowfiles", {})
 
             # Extract benchmark rasters from STAC scenarios
@@ -96,7 +97,7 @@ class PolygonPipeline:
 
         # Query hand index for catchments
         logger.info(f"[{self.pipeline_id}] Querying hand index for catchments")
-        data = await self.data_svc.query_for_catchments(self.polygon)
+        data = await self.data_svc.query_for_catchments(self.polygon_gdf)
         self.catchments = data.get("catchments", {})
 
         if not self.catchments:
@@ -143,7 +144,7 @@ class PolygonPipeline:
 
         return Result(
             pipeline_id=self.pipeline_id,
-            polygon_id=self.polygon.get("polygon_id", "unknown"),
+            polygon_id=str(self.pipeline_id),
             scenarios=scenario_results,
             catchment_count=len(self.catchments),
             total_scenarios=len(scenario_results),
@@ -480,8 +481,8 @@ if __name__ == "__main__":
     from nomad_api import NomadApiClient
 
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
-    parser.add_argument("--polys", help="JSON file containing a list of polygon dicts")
-    parser.add_argument("--index", type=int, default=0, help="Which polygon in the list to process")
+    parser.add_argument("--index", type=int, default=0, help="Which HUC index in the list to process")
+    parser.add_argument("--use-mock-polygon", action="store_true", help="Use polygon from mock data file instead of WBD")
     parser.add_argument(
         "--config", default=os.path.join("config", "pipeline_config.yml"), help="Path to your YAML config"
     )
@@ -493,11 +494,6 @@ if __name__ == "__main__":
     )
 
     cfg = load_config(args.config)
-    with open(args.polys, "r") as fp:
-        polygons = json.load(fp)
-    if not polygons:
-        raise RuntimeError(f"No polygons found in {args.polys!r}")
-    polygon = polygons[args.index]
 
     async def _main():
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
@@ -509,8 +505,21 @@ if __name__ == "__main__":
             nomad = NomadService(api, monitor)
 
             data_svc = DataService(cfg)
-            pid = str(850)
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon, pid)
+            pid = str(args.index)
+            
+            # Load geometry - either from WBD or mock data
+            if args.use_mock_polygon:
+                logging.info("Using polygon from mock data file")
+                polygon_gdf = data_svc.load_polygon_gdf_from_file(cfg.mock_data_paths.polygon_data_file)
+            else:
+                logging.info("Using polygon from WBD National gpkg")
+                polygon_gdf = data_svc.load_geometry_from_wbd(
+                    cfg.wbd.gpkg_path, 
+                    cfg.wbd.huc_list_path, 
+                    args.index
+                )
+            
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pid)
 
             try:
                 result = await pipeline.run()

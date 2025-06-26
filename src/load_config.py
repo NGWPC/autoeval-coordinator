@@ -43,7 +43,7 @@ class S3Config(BaseModel):
 
 class MockDataPaths(BaseModel):
     mock_catchment_data: str = "mock_catchments.json"
-    polygon_data_file: str = "mock_polygons.json"  # Path to polygon data
+    polygon_data_file: str = Field(..., description="Path to polygon GeoDataFrame file (gpkg format)")
     mock_stac_results: Optional[str] = Field(None, description="Path to mock STAC query results JSON")
 
 
@@ -69,6 +69,11 @@ class FlowScenarioConfig(BaseModel):
     output_dir: str = Field("combined_flowfiles", description="Directory to save combined flowfiles")
 
 
+class WbdConfig(BaseModel):
+    gpkg_path: str = Field(..., description="Path to WBD_National.gpkg file")
+    huc_list_path: str = Field(..., description="Path to huc_list.txt file")
+
+
 class Defaults(BaseModel):
     fim_type: Literal["extent", "depth"] = "extent"
     http_connection_limit: int = Field(10, gt=0, description="Max concurrent outgoing HTTP connections")
@@ -82,6 +87,7 @@ class AppConfig(BaseModel):
     hand_index: HandIndexConfig
     stac: Optional[StacConfig] = Field(None, description="STAC API configuration")
     flow_scenarios: Optional[FlowScenarioConfig] = Field(None, description="Flow scenario processing configuration")
+    wbd: WbdConfig = Field(..., description="WBD National data configuration")
     defaults: Defaults = Field(default_factory=Defaults)
 
 
