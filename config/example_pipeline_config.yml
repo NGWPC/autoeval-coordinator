@@ -33,6 +33,5 @@ flow_scenarios:
   output_dir: "combined_flowfiles"
 
 defaults:
-  gdal_cache_max: 1024  
   fim_type: "extent"
   http_connection_limit: 10

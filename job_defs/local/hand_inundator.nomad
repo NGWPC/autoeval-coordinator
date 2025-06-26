@@ -8,7 +8,6 @@ job "hand_inundator" {
       "catchment_data_path",
       "forecast_path",
       "output_path",
-      "gdal_cache_max",  
     ]
     meta_optional = [
       "fim_type", 
@@ -55,7 +54,30 @@ job "hand_inundator" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
-        GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
+        GDAL_CACHEMAX         = "1024"
+        
+        # GDAL Configuration
+        GDAL_NUM_THREADS = "1"
+        GDAL_TIFF_DIRECT_IO = "YES"
+        GDAL_DISABLE_READDIR_ON_OPEN = "TRUE"
+        CPL_LOG_ERRORS = "ON"
+        CPL_VSIL_CURL_ALLOWED_EXTENSIONS = ".tif,.vrt"
+        VSI_CACHE_SIZE = "268435456"
+        CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
+        
+        # Processing Defaults
+        LAKE_ID_FILTER_VALUE = "-999"
+        
+        # Nodata Values
+        DEPTH_NODATA_VALUE = "-9999"
+        INUNDATION_NODATA_VALUE = "255"
+        
+        # Output Configuration
+        INUNDATION_COMPRESS_TYPE = "lzw"
+        INUNDATION_BLOCK_SIZE = "256"
+        
+        # Logging
+        LOG_SUCCESS_LEVEL_NUM = "25"
       }
 
       resources {

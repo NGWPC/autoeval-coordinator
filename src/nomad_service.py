@@ -16,7 +16,6 @@ class DispatchMetaBase(BaseModel):
 
     pipeline_id: str
     fim_type: str
-    gdal_cache_max: str
     registry_token: str
     aws_access_key: str
     aws_secret_key: str
@@ -42,6 +41,18 @@ class MosaicDispatchMeta(DispatchMetaBase):
     def _ser_raster(self, v: List[str], info):
         # mosaic.py expects space-separated paths
         return " ".join(v)
+
+
+class AgreementDispatchMeta(DispatchMetaBase):
+    """
+    Metadata for the agreement_maker job.
+    """
+    
+    candidate_path: str
+    benchmark_path: str
+    output_path: str
+    metrics_path: str = ""
+    clip_geoms: str = ""
 
 
 class NomadService:

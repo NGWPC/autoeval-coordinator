@@ -26,6 +26,7 @@ class NomadConfig(BaseModel):
 class JobNames(BaseModel):
     hand_inundator: str = Field(..., examples=["hand-inundation-processor"])
     fim_mosaicker: str = Field(..., examples=["fim-mosaic-processor"])
+    agreement_maker: str = Field(..., examples=["agreement-maker-processor"])
 
 
 class S3Config(BaseModel):
@@ -48,14 +49,18 @@ class MockDataPaths(BaseModel):
 
 class HandIndexConfig(BaseModel):
     partitioned_base_path: str = Field(..., description="Base path to partitioned parquet files (local or s3://)")
-    overlap_threshold_percent: float = Field(10.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a catchment")
+    overlap_threshold_percent: float = Field(
+        10.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a catchment"
+    )
     enabled: bool = Field(True, description="Whether to use real hand index queries (True) or mock data (False)")
 
 
 class StacConfig(BaseModel):
     api_url: str = Field(..., description="STAC API root URL")
     collections: List[str] = Field(..., description="List of STAC collection IDs to query")
-    overlap_threshold_percent: float = Field(40.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a STAC item")
+    overlap_threshold_percent: float = Field(
+        40.0, ge=0.0, le=100.0, description="Minimum overlap percentage to keep a STAC item"
+    )
     datetime_filter: Optional[str] = Field(None, description="STAC datetime or interval filter")
     enabled: bool = Field(True, description="Whether to use STAC queries for flow scenarios")
 
@@ -65,9 +70,7 @@ class FlowScenarioConfig(BaseModel):
 
 
 class Defaults(BaseModel):
-    gdal_cache_max: int = Field(512, gt=0, description="GDAL cache size in MB for all jobs")
     fim_type: Literal["extent", "depth"] = "extent"
-    # Removed geo_mem_cache_inundator, geo_mem_cache_mosaicker, and mosaic_resolution
     http_connection_limit: int = Field(10, gt=0, description="Max concurrent outgoing HTTP connections")
 
 
