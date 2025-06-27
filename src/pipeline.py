@@ -1,14 +1,20 @@
+import argparse
 import asyncio
+import json
 import logging
+import os
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
+import aiohttp
 import geopandas as gpd
 
 from data_service import DataService
-from load_config import AppConfig
+from job_monitor import NomadJobMonitor
+from load_config import AppConfig, load_config
+from nomad_api import NomadApiClient
 from nomad_service import (
     AgreementDispatchMeta,
     InundationDispatchMeta,
@@ -176,15 +182,16 @@ class PolygonPipeline:
         # Wait for all tasks
         results = await asyncio.gather(*[t[0] for t in tasks], return_exceptions=True)
 
-        # Update database with job IDs and expected output paths
+        # Update database with expected output paths (status already set in nomad_service.py)
         job_updates = []
         for (task, output_container, scenario_id, catch_id, expected_output_path), result in zip(tasks, results):
             if not isinstance(result, Exception):
                 job_to_output_path[result] = expected_output_path
-                job_updates.append((result, self.pipeline_id, "dispatched", "inundate", [expected_output_path]))
-
-        if job_updates and self.log_db:
-            await self.log_db.batch_update_job_status(job_updates)
+                # Update with output path info
+                if self.log_db:
+                    await self.log_db.update_job_status(
+                        result, self.pipeline_id, "dispatched", "inundate", [expected_output_path]
+                    )
 
         # Group outputs by scenario
         outputs_by_scenario = {}
@@ -289,18 +296,18 @@ class PolygonPipeline:
         hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
         benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
 
-        # Update database with mosaic job IDs and expected output paths
-        job_updates = []
+        # Update database with expected output paths (status already set in nomad_service.py)
         for i, result in enumerate(hand_results):
-            if not isinstance(result, Exception):
-                job_updates.append((result, self.pipeline_id, "dispatched", "mosaic", [hand_output_paths[i]]))
+            if not isinstance(result, Exception) and self.log_db:
+                await self.log_db.update_job_status(
+                    result, self.pipeline_id, "dispatched", "mosaic", [hand_output_paths[i]]
+                )
 
         for i, result in enumerate(benchmark_results):
-            if not isinstance(result, Exception):
-                job_updates.append((result, self.pipeline_id, "dispatched", "mosaic", [benchmark_output_paths[i]]))
-
-        if job_updates and self.log_db:
-            await self.log_db.batch_update_job_status(job_updates)
+            if not isinstance(result, Exception) and self.log_db:
+                await self.log_db.update_job_status(
+                    result, self.pipeline_id, "dispatched", "mosaic", [benchmark_output_paths[i]]
+                )
 
         # Build intermediate results for agreement stage
         mosaic_results = []
@@ -387,16 +394,12 @@ class PolygonPipeline:
         # Wait for all agreement tasks
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Update database with agreement job IDs and expected output paths
-        job_updates = []
+        # Update database with expected output paths (status already set in nomad_service.py)
         for i, result in enumerate(results):
-            if not isinstance(result, Exception):
+            if not isinstance(result, Exception) and self.log_db:
                 # Agreement jobs produce both the agreement map and metrics file
                 output_paths = [agreement_output_paths[i], metrics_output_paths[i]]
-                job_updates.append((result, self.pipeline_id, "dispatched", "agreement", output_paths))
-
-        if job_updates and self.log_db:
-            await self.log_db.batch_update_job_status(job_updates)
+                await self.log_db.update_job_status(result, self.pipeline_id, "dispatched", "agreement", output_paths)
 
         # Build final scenario results
         scenario_results = []
@@ -528,16 +531,6 @@ class PolygonPipeline:
 
 
 if __name__ == "__main__":
-    import argparse
-    import json
-    import os
-
-    import aiohttp
-
-    from job_monitor import NomadJobMonitor
-    from load_config import load_config
-    from nomad_api import NomadApiClient
-
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument("--index", type=int, default=0, help="Which HUC index in the list to process")
     parser.add_argument(

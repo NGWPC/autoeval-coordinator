@@ -6,6 +6,8 @@ from urllib.parse import urlparse
 
 import aiohttp
 import nomad  # python-nomad client
+import urllib3
+from requests.adapters import HTTPAdapter
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -117,6 +119,26 @@ class NomadApiClient:
             token=config.nomad.token or None,
             namespace=config.nomad.namespace or None,
         )
+        
+        # Configure the underlying requests session with a larger connection pool
+        # Check for the session attribute in the client or its requester
+        session_obj = None
+        if hasattr(self._client, 'session'):
+            session_obj = self._client.session
+        elif hasattr(self._client, 'requester') and hasattr(self._client.requester, 'session'):
+            session_obj = self._client.requester.session
+        
+        if session_obj:
+            adapter = HTTPAdapter(
+                pool_connections=config.defaults.http_connection_limit,
+                pool_maxsize=config.defaults.http_connection_limit,
+                max_retries=urllib3.Retry(total=3, backoff_factor=0.3)
+            )
+            session_obj.mount('http://', adapter)
+            session_obj.mount('https://', adapter)
+            logging.debug(f"Configured Nomad client with connection pool size: {config.defaults.http_connection_limit}")
+        else:
+            logging.debug("Could not find session object in Nomad client to configure connection pool")
 
         self.events = EventsWrapper(
             session=self._session,

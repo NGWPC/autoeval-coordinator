@@ -75,6 +75,20 @@ class NomadService:
         if not job_id:
             raise RuntimeError(f"Missing DispatchedJobID in {resp!r}")
 
+        # 1.5) Create database record immediately to avoid race condition
+        if self.monitor._log_db:
+            pipeline_id = meta.get("pipeline_id", "")
+            # Determine stage from job_name
+            stage = "unknown"
+            if "inundator" in job_name:
+                stage = "inundate"
+            elif "mosaicker" in job_name:
+                stage = "mosaic"
+            elif "agreement" in job_name:
+                stage = "agreement"
+            
+            await self.monitor._log_db.update_job_status(job_id, pipeline_id, "dispatched", stage)
+
         # 2) track & wait for allocation
         ctx = await self.monitor.track_job(job_id, meta)
         try:
@@ -89,4 +103,4 @@ class NomadService:
             raise RuntimeError(f"Unexpected output for {job_id}: {output!r}")
 
         logging.info("Nomad job %s finished → %s", job_id, output)
-        return output
+        return job_id

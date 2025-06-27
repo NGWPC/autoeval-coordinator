@@ -134,6 +134,22 @@ class NomadJobMonitor:
                     if not ctx.done_fut.done():
                         output = ctx.meta.get("output_path")
                         ctx.done_fut.set_result(output)
+                    
+                    # Update database with final status and actual output paths
+                    if self._log_db and ctx.pipeline_id:
+                        # Extract output paths from meta
+                        write_paths = []
+                        if "output_path" in ctx.meta:
+                            write_paths.append(ctx.meta["output_path"])
+                        if "metrics_path" in ctx.meta and ctx.meta["metrics_path"]:
+                            write_paths.append(ctx.meta["metrics_path"])
+                        
+                        # Get existing job record to preserve stage
+                        existing_job = await self._log_db.get_job_status(jid)
+                        if existing_job:
+                            stage = existing_job["stage"]
+                            self._status_updates.append((jid, ctx.pipeline_id, "succeeded", stage, write_paths))
+                    
                     self._contexts.pop(jid, None)
 
                 elif status in ("failed", "lost", "restart"):
@@ -141,6 +157,15 @@ class NomadJobMonitor:
                         ctx.done_fut.set_exception(
                             RuntimeError(f"Job {jid} failed (status={status})")
                         )
+                    
+                    # Update database with final failed status (no write_paths since job failed)
+                    if self._log_db and ctx.pipeline_id:
+                        # Get existing job record to preserve stage
+                        existing_job = await self._log_db.get_job_status(jid)
+                        if existing_job:
+                            stage = existing_job["stage"]
+                            self._status_updates.append((jid, ctx.pipeline_id, "failed", stage, []))
+                    
                     self._contexts.pop(jid, None)
 
         except asyncio.CancelledError:
