@@ -14,7 +14,6 @@ class DispatchMetaBase(BaseModel):
     Common parameters for all dispatched jobs.
     """
 
-    pipeline_id: str
     fim_type: str
     registry_token: str
     aws_access_key: str
@@ -67,6 +66,7 @@ class NomadService:
         job_name: str,
         instance_prefix: str,
         meta: Dict[str, Any],
+        pipeline_id: str,
     ) -> str:
         # 1) dispatch
         logging.info("Dispatching job %r (prefix=%r)", job_name, instance_prefix)
@@ -77,7 +77,6 @@ class NomadService:
 
         # 1.5) Create database record immediately to avoid race condition
         if self.monitor._log_db:
-            pipeline_id = meta.get("pipeline_id", "")
             # Determine stage from job_name
             stage = "unknown"
             if "inundator" in job_name:
@@ -90,7 +89,7 @@ class NomadService:
             await self.monitor._log_db.update_job_status(job_id, pipeline_id, "dispatched", stage)
 
         # 2) track & wait for allocation
-        ctx = await self.monitor.track_job(job_id, meta)
+        ctx = await self.monitor.track_job(job_id, meta, pipeline_id)
         try:
             await asyncio.wait_for(ctx.alloc_fut, timeout=None)
             logging.info("Job %s allocated – now waiting for completion", job_id)

@@ -4,7 +4,6 @@ job "agreement_maker" {
 
   parameterized {
     meta_required = [
-      "pipeline_id",
       "candidate_path", 
       "benchmark_path",
       "output_path",
