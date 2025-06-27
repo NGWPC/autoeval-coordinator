@@ -22,8 +22,285 @@ from nomad_service import (
     NomadService,
 )
 from pipeline_log_db import PipelineLogDB
+from pipeline_stages import PipelineStage
+from pipeline_utils import PathFactory, PipelineResult
 
 logger = logging.getLogger(__name__)
+
+
+class InundationStage(PipelineStage):
+    """Stage that runs inundation jobs for all catchments in all scenarios."""
+
+    def __init__(
+        self,
+        config: AppConfig,
+        nomad_service,
+        data_service,
+        path_factory: PathFactory,
+        pipeline_id: str,
+        catchments: Dict[str, Dict[str, Any]],
+    ):
+        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id)
+        self.catchments = catchments
+
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """All results are valid for inundation stage."""
+        return results
+
+    async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """Run inundation jobs for all catchments in all scenarios."""
+        valid_results = self.filter_inputs(results)
+        self.log_stage_start("Inundation", len(valid_results))
+
+        # Create tasks for all catchment/scenario combinations
+        tasks = []
+        task_metadata = []
+
+        for result in valid_results:
+            for catch_id, catchment_info in self.catchments.items():
+                output_path = self.path_factory.inundation_output_path(result.scenario_id, catch_id)
+                result.set_path("inundation", f"catchment_{catch_id}", output_path)
+
+                task = asyncio.create_task(self._process_catchment(result, catch_id, catchment_info, output_path))
+                tasks.append(task)
+                task_metadata.append((result, catch_id, output_path))
+
+        # Wait for all tasks
+        task_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Group results by scenario and validate outputs
+        scenario_outputs = {}
+        for (result, catch_id, output_path), task_result in zip(task_metadata, task_results):
+            if result.scenario_id not in scenario_outputs:
+                scenario_outputs[result.scenario_id] = []
+
+            if not isinstance(task_result, Exception):
+                scenario_outputs[result.scenario_id].append(output_path)
+            else:
+                logger.error(f"[{result.scenario_id}] Catchment {catch_id} inundation failed: {task_result}")
+
+        # Validate S3 files and update results
+        updated_results = []
+        for result in valid_results:
+            outputs = scenario_outputs.get(result.scenario_id, [])
+            if outputs:
+                valid_outputs = await self.data_svc.validate_s3_files(outputs)
+                if valid_outputs:
+                    result.set_path("inundation", "valid_outputs", valid_outputs)
+                    result.status = "inundation_complete"
+                    updated_results.append(result)
+                    logger.debug(f"[{result.scenario_id}] {len(valid_outputs)}/{len(outputs)} inundation outputs valid")
+                else:
+                    result.mark_failed("No valid inundation outputs")
+            else:
+                result.mark_failed("No inundation outputs produced")
+
+        self.log_stage_complete("Inundation", len(updated_results), len(valid_results))
+        return updated_results
+
+    async def _process_catchment(
+        self, result: PipelineResult, catch_id: str, catchment_info: Dict[str, Any], output_path: str
+    ) -> str:
+        """Process a single catchment for a scenario."""
+        # Copy files to S3
+        local_parquet = catchment_info.get("parquet_path")
+        if not local_parquet:
+            raise ValueError(f"No parquet_path found for catchment {catch_id}")
+
+        parquet_path = await self.data_svc.copy_file_to_uri(
+            local_parquet, self.path_factory.catchment_path(result.scenario_id, catch_id, "catchment_data.parquet")
+        )
+        flowfile_s3_path = await self.data_svc.copy_file_to_uri(
+            result.flowfile_path, self.path_factory.catchment_path(result.scenario_id, catch_id, "flowfile.csv")
+        )
+
+        # Create job metadata and run
+        meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
+
+        job_id = await self.nomad.run_job(
+            self.config.jobs.hand_inundator,
+            instance_prefix=f"inund-{result.scenario_id}-catch-{str(catch_id)}---",
+            meta=meta.model_dump(),
+            pipeline_id=self.pipeline_id,
+        )
+        logger.debug(f"[{result.scenario_id}/{catch_id}] inundator done → {job_id}")
+        return job_id
+
+    def _create_inundation_meta(
+        self, catchment_path: str, forecast_path: str, output_path: str
+    ) -> InundationDispatchMeta:
+        """Create inundation job metadata."""
+        return InundationDispatchMeta(
+            catchment_data_path=catchment_path,
+            forecast_path=forecast_path,
+            output_path=output_path,
+            **self._get_base_meta_kwargs(),
+        )
+
+
+class MosaicStage(PipelineStage):
+    """Stage that creates HAND and benchmark mosaics from inundation outputs."""
+
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """Filter results that have valid inundation outputs."""
+        return [r for r in results if r.status == "inundation_complete" and r.get_path("inundation", "valid_outputs")]
+
+    async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """Run mosaic jobs for scenarios with valid inundation outputs."""
+        valid_results = self.filter_inputs(results)
+        self.log_stage_start("Mosaic", len(valid_results))
+
+        hand_tasks = []
+        benchmark_tasks = []
+        task_results = []
+
+        for result in valid_results:
+            valid_outputs = result.get_path("inundation", "valid_outputs")
+            benchmark_rasters = result.benchmark_rasters
+
+            if not valid_outputs or not benchmark_rasters:
+                logger.warning(f"[{result.scenario_id}] Skipping mosaic - missing inputs")
+                continue
+
+            # HAND mosaic
+            hand_output_path = self.path_factory.hand_mosaic_path(result.scenario_id)
+            result.set_path("mosaic", "hand", hand_output_path)
+            hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
+            hand_task = asyncio.create_task(
+                self.nomad.run_job(
+                    self.config.jobs.fim_mosaicker,
+                    instance_prefix=f"hand-mosaic-{result.scenario_id}",
+                    meta=hand_meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
+                )
+            )
+            hand_tasks.append(hand_task)
+
+            # Benchmark mosaic
+            benchmark_output_path = self.path_factory.benchmark_mosaic_path(result.scenario_id)
+            result.set_path("mosaic", "benchmark", benchmark_output_path)
+            benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
+            benchmark_task = asyncio.create_task(
+                self.nomad.run_job(
+                    self.config.jobs.fim_mosaicker,
+                    instance_prefix=f"bench-mosaic-{result.scenario_id}",
+                    meta=benchmark_meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
+                )
+            )
+            benchmark_tasks.append(benchmark_task)
+            task_results.append(result)
+
+        if not hand_tasks:
+            self.log_stage_complete("Mosaic", 0, len(valid_results))
+            return []
+
+        # Wait for all mosaic tasks
+        hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
+        benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
+
+        # Update results based on success/failure
+        successful_results = []
+        for result, hand_result, benchmark_result in zip(task_results, hand_results, benchmark_results):
+            hand_failed = isinstance(hand_result, Exception)
+            benchmark_failed = isinstance(benchmark_result, Exception)
+
+            if hand_failed:
+                logger.error(f"[{result.scenario_id}] HAND mosaic failed: {hand_result}")
+            if benchmark_failed:
+                logger.error(f"[{result.scenario_id}] Benchmark mosaic failed: {benchmark_result}")
+
+            if not hand_failed and not benchmark_failed:
+                result.status = "mosaic_complete"
+                successful_results.append(result)
+                logger.debug(f"[{result.scenario_id}] Mosaic stage complete")
+            else:
+                result.mark_failed("One or both mosaics failed")
+
+        self.log_stage_complete("Mosaic", len(successful_results), len(valid_results))
+        return successful_results
+
+    def _create_mosaic_meta(self, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
+        """Create mosaic job metadata."""
+        return MosaicDispatchMeta(
+            raster_paths=raster_paths,
+            output_path=output_path,
+            **self._get_base_meta_kwargs(),
+        )
+
+
+class AgreementStage(PipelineStage):
+    """Stage that creates agreement maps from HAND and benchmark mosaics."""
+
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """Filter results that have valid mosaic outputs."""
+        return [r for r in results if r.status == "mosaic_complete"]
+
+    async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
+        """Run agreement jobs for scenarios with valid mosaic outputs."""
+        valid_results = self.filter_inputs(results)
+        self.log_stage_start("Agreement", len(valid_results))
+
+        tasks = []
+        task_results = []
+
+        for result in valid_results:
+            hand_mosaic = result.get_path("mosaic", "hand")
+            benchmark_mosaic = result.get_path("mosaic", "benchmark")
+
+            agreement_output_path = self.path_factory.agreement_map_path(result.scenario_id)
+            metrics_output_path = self.path_factory.agreement_metrics_path(result.scenario_id)
+
+            result.set_path("agreement", "map", agreement_output_path)
+            result.set_path("agreement", "metrics", metrics_output_path)
+
+            meta = self._create_agreement_meta(
+                hand_mosaic, benchmark_mosaic, agreement_output_path, metrics_output_path
+            )
+
+            task = asyncio.create_task(
+                self.nomad.run_job(
+                    self.config.jobs.agreement_maker,
+                    instance_prefix=f"agree-{result.scenario_id}",
+                    meta=meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
+                )
+            )
+            tasks.append(task)
+            task_results.append(result)
+
+        if not tasks:
+            self.log_stage_complete("Agreement", 0, len(valid_results))
+            return []
+
+        # Wait for all agreement tasks
+        task_job_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Update results based on success/failure
+        successful_results = []
+        for result, job_result in zip(task_results, task_job_results):
+            if isinstance(job_result, Exception):
+                result.mark_failed(f"Agreement job failed: {job_result}")
+                logger.error(f"[{result.scenario_id}] Agreement job failed: {job_result}")
+            else:
+                result.mark_completed()
+                successful_results.append(result)
+                logger.debug(f"[{result.scenario_id}] Pipeline complete")
+
+        self.log_stage_complete("Agreement", len(successful_results), len(valid_results))
+        return successful_results
+
+    def _create_agreement_meta(
+        self, candidate_path: str, benchmark_path: str, output_path: str, metrics_path: str = ""
+    ) -> AgreementDispatchMeta:
+        """Create agreement job metadata."""
+        return AgreementDispatchMeta(
+            candidate_path=candidate_path,
+            benchmark_path=benchmark_path,
+            output_path=output_path,
+            metrics_path=metrics_path,
+            **self._get_base_meta_kwargs(),
+        )
 
 
 class PolygonPipeline:
@@ -32,6 +309,7 @@ class PolygonPipeline:
     1) Initialize: Query STAC for scenarios and hand index for catchments
     2) Stage 1: Run all inundation jobs concurrently across all scenarios
     3) Stage 2: Run all mosaic jobs concurrently for scenarios with valid outputs
+    4) Stage 3: Run all agreement jobs concurrently for scenarios with valid mosaics
     """
 
     def __init__(
@@ -50,6 +328,9 @@ class PolygonPipeline:
         self.pipeline_id = pipeline_id  # This is the HUC code
         self.log_db = log_db
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
+
+        # Create path factory
+        self.path_factory = PathFactory(config, pipeline_id)
 
         # Populated by initialize()
         self.catchments: Dict[str, Dict[str, Any]] = {}
@@ -110,46 +391,51 @@ class PolygonPipeline:
         """Run the pipeline with stage-based parallelism."""
         await self.initialize()
 
-        # Build scenario list
-        scenarios = []
-        for i, (collection, flows) in enumerate(self.flow_scenarios.items()):
+        # Build scenario results
+        results = []
+        for collection, flows in self.flow_scenarios.items():
             for scenario, flowfile_path in flows.items():
                 benchmark_rasters = self.benchmark_scenarios.get(collection, {}).get(scenario, [])
-                scenarios.append(
-                    {
-                        "scenario_id": f"{self.pipeline_id}-{collection}-{scenario}",
-                        "collection_name": collection,
-                        "scenario_name": scenario,
-                        "flowfile_path": flowfile_path,
-                        "benchmark_rasters": benchmark_rasters,
-                    }
+                result = PipelineResult(
+                    scenario_id=f"{self.pipeline_id}-{collection}-{scenario}",
+                    collection_name=collection,
+                    scenario_name=scenario,
+                    flowfile_path=flowfile_path,
+                    benchmark_rasters=benchmark_rasters,
                 )
+                results.append(result)
 
-        logger.debug(f"[{self.pipeline_id}] Processing {len(scenarios)} scenarios with stage-based parallelism")
+        logger.debug(f"[{self.pipeline_id}] Processing {len(results)} scenarios with stage-based parallelism")
 
         try:
-            # Stage 1: All inundation jobs
-            logger.debug(f"[{self.pipeline_id}] Stage 1: Starting inundation jobs for all scenarios")
-            inundation_results = await self._run_inundation_stage(scenarios)
+            # Create stages
+            inundation_stage = InundationStage(
+                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.catchments
+            )
+            mosaic_stage = MosaicStage(self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id)
+            agreement_stage = AgreementStage(
+                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id
+            )
 
-            # Stage 2: All mosaic jobs
-            logger.debug(f"[{self.pipeline_id}] Stage 2: Starting mosaic jobs for scenarios with valid outputs")
-            mosaic_results = await self._run_mosaic_stage(scenarios, inundation_results)
+            # Run stages sequentially
+            results = await inundation_stage.run(results)
+            results = await mosaic_stage.run(results)
+            results = await agreement_stage.run(results)
 
-            # Stage 3: All agreement jobs
-            logger.debug(f"[{self.pipeline_id}] Stage 3: Starting agreement jobs for scenarios with valid mosaics")
-            scenario_results = await self._run_agreement_stage(mosaic_results)
+            # Count successful scenarios
+            successful_results = [r for r in results if r.status == "completed"]
+            total_attempted = len([r for r in results if r.status != "pending"])
 
             result = {
                 "status": "success",
                 "pipeline_id": self.pipeline_id,
                 "catchment_count": len(self.catchments),
-                "total_scenarios_attempted": len(scenarios),
-                "successful_scenarios": len(scenario_results),
-                "message": f"Pipeline completed successfully with {len(scenario_results)}/{len(scenarios)} scenarios",
+                "total_scenarios_attempted": total_attempted,
+                "successful_scenarios": len(successful_results),
+                "message": f"Pipeline completed successfully with {len(successful_results)}/{total_attempted} scenarios",
             }
             logger.info(
-                f"[{self.pipeline_id}] Pipeline SUCCESS: {len(scenario_results)}/{len(scenarios)} scenarios completed"
+                f"[{self.pipeline_id}] Pipeline SUCCESS: {len(successful_results)}/{total_attempted} scenarios completed"
             )
             return result
         except Exception as e:
@@ -160,345 +446,6 @@ class PolygonPipeline:
                 "error": str(e),
                 "message": f"Pipeline failed: {str(e)}",
             }
-
-    async def _run_inundation_stage(self, scenarios: List[Dict[str, Any]]) -> Dict[str, List[str]]:
-        """Run all inundation jobs concurrently and return valid outputs by scenario."""
-        # Create all inundation tasks
-        tasks = []
-        job_to_output_path = {}  # Track expected output paths for each job
-
-        for scenario in scenarios:
-            for catch_id, info in self.catchments.items():
-                output_container = []
-                expected_output_path = (
-                    f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-                    f"pipeline_{self.pipeline_id}/scenario_{scenario['scenario_id']}/catchment_{catch_id}/inundation_output.tif"
-                )
-                task = asyncio.create_task(self._process_catchment(scenario, catch_id, info, output_container))
-                tasks.append((task, output_container, scenario["scenario_id"], catch_id, expected_output_path))
-
-        logger.debug(f"[{self.pipeline_id}] Submitting {len(tasks)} inundation jobs across all scenarios")
-
-        # Wait for all tasks
-        results = await asyncio.gather(*[t[0] for t in tasks], return_exceptions=True)
-
-        # Track job outputs for validation (status updates handled by job monitor)
-        for (task, output_container, scenario_id, catch_id, expected_output_path), result in zip(tasks, results):
-            if not isinstance(result, Exception):
-                job_to_output_path[result] = expected_output_path
-
-        # Group outputs by scenario
-        outputs_by_scenario = {}
-        failed_count = 0
-
-        for (task, output_container, scenario_id, catch_id, expected_output_path), result in zip(tasks, results):
-            if scenario_id not in outputs_by_scenario:
-                outputs_by_scenario[scenario_id] = []
-
-            if isinstance(result, Exception):
-                failed_count += 1
-                logger.error(f"[{scenario_id}] Catchment {catch_id} inundation failed: {result}")
-            else:
-                # Use the expected output path since that's what the job should produce
-                outputs_by_scenario[scenario_id].append(expected_output_path)
-
-        logger.debug(f"[{self.pipeline_id}] Inundation stage complete: {failed_count}/{len(tasks)} jobs failed")
-
-        # Validate outputs for each scenario
-        validated_results = {}
-        for scenario_id, outputs in outputs_by_scenario.items():
-            valid_outputs = await self.data_svc.validate_s3_files(outputs) if outputs else []
-            validated_results[scenario_id] = valid_outputs
-            logger.debug(f"[{scenario_id}] {len(valid_outputs)}/{len(outputs)} inundation outputs are valid")
-
-        return validated_results
-
-    async def _run_mosaic_stage(
-        self, scenarios: List[Dict[str, Any]], inundation_results: Dict[str, List[str]]
-    ) -> List[Dict[str, Any]]:
-        """Run mosaic jobs for scenarios with valid outputs."""
-        # Create mosaic tasks for scenarios with valid outputs
-        hand_tasks = []
-        benchmark_tasks = []
-        valid_scenarios = []
-        hand_output_paths = []  # Track expected output paths
-        benchmark_output_paths = []  # Track expected output paths
-
-        for scenario in scenarios:
-            scenario_id = scenario["scenario_id"]
-            valid_outputs = inundation_results.get(scenario_id, [])
-            benchmark_rasters = scenario.get("benchmark_rasters", [])
-
-            if not valid_outputs:
-                logger.warning(f"[{scenario_id}] Skipping mosaic - no valid inundation outputs")
-                continue
-
-            if not benchmark_rasters:
-                logger.warning(f"[{scenario_id}] Skipping benchmark mosaic - no benchmark rasters")
-                continue
-
-            logger.debug(f"[{scenario_id}] Creating HAND mosaic task with {len(valid_outputs)} inundation outputs")
-            logger.debug(
-                f"[{scenario_id}] Creating benchmark mosaic task with {len(benchmark_rasters)} benchmark rasters"
-            )
-
-            # HAND mosaic task
-            hand_output_path = (
-                f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-                f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/HAND_mosaic.tif"
-            )
-            hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
-            hand_task = asyncio.create_task(
-                self.nomad.run_job(
-                    self.config.jobs.fim_mosaicker,
-                    instance_prefix=f"hand-mosaic-{scenario_id}",
-                    meta=hand_meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
-                )
-            )
-            hand_tasks.append(hand_task)
-            hand_output_paths.append(hand_output_path)
-
-            # Benchmark mosaic task
-            benchmark_output_path = (
-                f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-                f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/benchmark_mosaic.tif"
-            )
-            benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
-            benchmark_task = asyncio.create_task(
-                self.nomad.run_job(
-                    self.config.jobs.fim_mosaicker,
-                    instance_prefix=f"bench-mosaic-{scenario_id}",
-                    meta=benchmark_meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
-                )
-            )
-            benchmark_tasks.append(benchmark_task)
-            benchmark_output_paths.append(benchmark_output_path)
-            valid_scenarios.append(scenario)
-
-        if not hand_tasks:
-            logger.warning(f"[{self.pipeline_id}] No mosaic jobs to submit - all scenarios failed inundation")
-            return []
-
-        total_jobs = len(hand_tasks) + len(benchmark_tasks)
-        logger.debug(
-            f"[{self.pipeline_id}] Submitting {total_jobs} mosaic jobs ({len(hand_tasks)} HAND, {len(benchmark_tasks)} benchmark)"
-        )
-
-        # Wait for all mosaic tasks
-        hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
-        benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
-
-        # Job status updates are handled by job monitor
-
-        # Build intermediate results for agreement stage
-        mosaic_results = []
-        for scenario_index, (hand_result, benchmark_result, scenario) in enumerate(zip(hand_results, benchmark_results, valid_scenarios)):
-            scenario_id = scenario["scenario_id"]
-
-            # Check if both mosaics succeeded
-            hand_failed = isinstance(hand_result, Exception)
-            benchmark_failed = isinstance(benchmark_result, Exception)
-
-            if hand_failed:
-                logger.error(f"[{scenario_id}] HAND mosaic failed: {hand_result}")
-            if benchmark_failed:
-                logger.error(f"[{scenario_id}] Benchmark mosaic failed: {benchmark_result}")
-
-            # Only create result if both mosaics succeeded
-            if not hand_failed and not benchmark_failed:
-                logger.debug(
-                    f"[{scenario_id}] Mosaic stage complete → HAND: {hand_output_paths[scenario_index]}, Benchmark: {benchmark_output_paths[scenario_index]}"
-                )
-                mosaic_results.append(
-                    {
-                        **scenario,  # Include original scenario data
-                        "mosaic_output": hand_output_paths[scenario_index],
-                        "benchmark_mosaic_output": benchmark_output_paths[scenario_index],
-                    }
-                )
-            else:
-                logger.warning(f"[{scenario_id}] Scenario failed - one or both mosaics failed")
-
-        logger.debug(
-            f"[{self.pipeline_id}] Mosaic stage complete: {len(mosaic_results)}/{len(scenarios)} scenarios succeeded"
-        )
-        return mosaic_results
-
-    async def _run_agreement_stage(self, mosaic_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Run agreement jobs for scenarios with valid mosaic outputs."""
-        if not mosaic_results:
-            logger.warning(f"[{self.pipeline_id}] No agreement jobs to submit - all scenarios failed mosaicking")
-            return []
-
-        # Create agreement tasks
-        tasks = []
-        agreement_output_paths = []  # Track expected output paths
-        metrics_output_paths = []  # Track expected metrics paths
-
-        for scenario in mosaic_results:
-            scenario_id = scenario["scenario_id"]
-
-            # Create agreement output paths
-            agreement_output_path = (
-                f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-                f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/agreement_map.tif"
-            )
-
-            # Create metrics output path
-            metrics_output_path = (
-                f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-                f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/agreement_metrics.csv"
-            )
-
-            # Create agreement job metadata
-            meta = self._create_agreement_meta(
-                scenario["mosaic_output"],  # candidate (HAND mosaic)
-                scenario["benchmark_mosaic_output"],  # benchmark mosaic
-                agreement_output_path,
-                metrics_output_path,
-            )
-
-            task = asyncio.create_task(
-                self.nomad.run_job(
-                    self.config.jobs.agreement_maker,
-                    instance_prefix=f"agree-{scenario_id}",
-                    meta=meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
-                )
-            )
-            tasks.append(task)
-            agreement_output_paths.append(agreement_output_path)
-            metrics_output_paths.append(metrics_output_path)
-
-        logger.debug(f"[{self.pipeline_id}] Submitting {len(tasks)} agreement jobs")
-
-        # Wait for all agreement tasks
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # Job status updates are handled by job monitor
-
-        # Build final scenario results
-        scenario_results = []
-        for result_index, (result, scenario) in enumerate(zip(results, mosaic_results)):
-            scenario_id = scenario["scenario_id"]
-
-            # Check if agreement job succeeded
-            if isinstance(result, Exception):
-                logger.error(f"[{scenario_id}] Agreement job failed: {result}")
-                continue
-
-            logger.debug(
-                f"[{scenario_id}] Pipeline complete → Agreement: {agreement_output_paths[result_index]}, Metrics: {metrics_output_paths[result_index]}"
-            )
-            scenario_results.append(
-                {
-                    "scenario_id": scenario_id,
-                    "collection_name": scenario["collection_name"],
-                    "scenario_name": scenario["scenario_name"],
-                    "flowfile_path": scenario["flowfile_path"],
-                    "mosaic_output": scenario["mosaic_output"],
-                    "benchmark_mosaic_output": scenario["benchmark_mosaic_output"],
-                    "agreement_output": agreement_output_paths[result_index],
-                    "agreement_metrics_path": metrics_output_paths[result_index],
-                }
-            )
-
-        logger.debug(
-            f"[{self.pipeline_id}] Pipeline complete: {len(scenario_results)}/{len(mosaic_results)} scenarios succeeded"
-        )
-        return scenario_results
-
-    async def _process_catchment(
-        self,
-        scenario: Dict[str, Any],
-        catch_id: str,
-        catchment_info: Dict[str, Any],
-        collector: List[str],
-    ) -> str:
-        """Process a single catchment for a scenario.
-
-        Returns:
-            Job ID of the submitted nomad job
-        """
-        scenario_id = scenario["scenario_id"]
-        flowfile_path = scenario["flowfile_path"]
-
-        base_path = (
-            f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
-            f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/catchment_{catch_id}"
-        )
-
-        # Copy files to S3
-        local_parquet = catchment_info.get("parquet_path")
-        if not local_parquet:
-            raise ValueError(f"No parquet_path found for catchment {catch_id}")
-
-        parquet_path = await self.data_svc.copy_file_to_uri(local_parquet, f"{base_path}/catchment_data.parquet")
-        flowfile_s3_path = await self.data_svc.copy_file_to_uri(flowfile_path, f"{base_path}/flowfile.csv")
-
-        logger.debug(
-            f"[{scenario_id}/{catch_id}] using catchment parquet → {parquet_path}, " f"flowfile → {flowfile_s3_path}"
-        )
-
-        # Create job metadata and run
-        meta = self._create_inundation_meta(
-            parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
-        )
-
-        job_id = await self.nomad.run_job(
-            self.config.jobs.hand_inundator,
-            instance_prefix=f"inund-{scenario_id}-catch-{str(catch_id)}---",
-            meta=meta.model_dump(),
-            pipeline_id=self.pipeline_id,
-        )
-        collector.append(job_id)
-        logger.debug(f"[{scenario_id}/{catch_id}] inundator done → {job_id}")
-        return job_id
-
-    def _create_inundation_meta(
-        self, catchment_path: str, forecast_path: str, output_path: str
-    ) -> InundationDispatchMeta:
-        """Create inundation job metadata using existing DispatchMetaBase."""
-        return InundationDispatchMeta(
-            catchment_data_path=catchment_path,
-            forecast_path=forecast_path,
-            output_path=output_path,
-            fim_type=self.config.defaults.fim_type,
-            registry_token=self.config.nomad.registry_token or "",
-            aws_access_key=self.config.s3.AWS_ACCESS_KEY_ID or "",
-            aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
-            aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
-        )
-
-    def _create_mosaic_meta(self, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
-        """Create mosaic job metadata using existing DispatchMetaBase."""
-        return MosaicDispatchMeta(
-            raster_paths=raster_paths,
-            output_path=output_path,
-            fim_type=self.config.defaults.fim_type,
-            registry_token=self.config.nomad.registry_token or "",
-            aws_access_key=self.config.s3.AWS_ACCESS_KEY_ID or "",
-            aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
-            aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
-        )
-
-    def _create_agreement_meta(
-        self, candidate_path: str, benchmark_path: str, output_path: str, metrics_path: str = ""
-    ) -> AgreementDispatchMeta:
-        """Create agreement job metadata using existing DispatchMetaBase."""
-        return AgreementDispatchMeta(
-            candidate_path=candidate_path,
-            benchmark_path=benchmark_path,
-            output_path=output_path,
-            metrics_path=metrics_path,
-            fim_type=self.config.defaults.fim_type,
-            registry_token=self.config.nomad.registry_token or "",
-            aws_access_key=self.config.s3.AWS_ACCESS_KEY_ID or "",
-            aws_secret_key=self.config.s3.AWS_SECRET_ACCESS_KEY or "",
-            aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
-        )
 
     async def cleanup(self) -> None:
         """Clean up temporary resources."""
