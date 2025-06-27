@@ -26,7 +26,6 @@ class PipelineLogDB:
         self._lock = asyncio.Lock()
     
     async def initialize(self) -> None:
-        """Initialize the database and create tables if they don't exist."""
         async with self._lock:
             await self._create_tables()
             logger.debug(f"Database initialized at {self.db_path}")
