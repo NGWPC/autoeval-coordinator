@@ -182,16 +182,10 @@ class PolygonPipeline:
         # Wait for all tasks
         results = await asyncio.gather(*[t[0] for t in tasks], return_exceptions=True)
 
-        # Update database with expected output paths (status already set in nomad_service.py)
-        job_updates = []
+        # Track job outputs for validation (status updates handled by job monitor)
         for (task, output_container, scenario_id, catch_id, expected_output_path), result in zip(tasks, results):
             if not isinstance(result, Exception):
                 job_to_output_path[result] = expected_output_path
-                # Update with output path info
-                if self.log_db:
-                    await self.log_db.update_job_status(
-                        result, self.pipeline_id, "dispatched", "inundate", [expected_output_path]
-                    )
 
         # Group outputs by scenario
         outputs_by_scenario = {}
@@ -253,7 +247,7 @@ class PolygonPipeline:
                 f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/HAND_mosaic.tif"
             )
-            hand_meta = self._create_mosaic_meta(scenario_id, valid_outputs, hand_output_path)
+            hand_meta = self._create_mosaic_meta(self.pipeline_id, valid_outputs, hand_output_path)
             hand_task = asyncio.create_task(
                 self.nomad.run_job(
                     self.config.jobs.fim_mosaicker,
@@ -269,9 +263,7 @@ class PolygonPipeline:
                 f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/benchmark_mosaic.tif"
             )
-            benchmark_meta = self._create_mosaic_meta(
-                f"{scenario_id}-benchmark", benchmark_rasters, benchmark_output_path
-            )
+            benchmark_meta = self._create_mosaic_meta(self.pipeline_id, benchmark_rasters, benchmark_output_path)
             benchmark_task = asyncio.create_task(
                 self.nomad.run_job(
                     self.config.jobs.fim_mosaicker,
@@ -296,18 +288,7 @@ class PolygonPipeline:
         hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
         benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
 
-        # Update database with expected output paths (status already set in nomad_service.py)
-        for i, result in enumerate(hand_results):
-            if not isinstance(result, Exception) and self.log_db:
-                await self.log_db.update_job_status(
-                    result, self.pipeline_id, "dispatched", "mosaic", [hand_output_paths[i]]
-                )
-
-        for i, result in enumerate(benchmark_results):
-            if not isinstance(result, Exception) and self.log_db:
-                await self.log_db.update_job_status(
-                    result, self.pipeline_id, "dispatched", "mosaic", [benchmark_output_paths[i]]
-                )
+        # Job status updates are handled by job monitor
 
         # Build intermediate results for agreement stage
         mosaic_results = []
@@ -371,7 +352,7 @@ class PolygonPipeline:
 
             # Create agreement job metadata
             meta = self._create_agreement_meta(
-                scenario_id,
+                self.pipeline_id,
                 scenario["mosaic_output"],  # candidate (HAND mosaic)
                 scenario["benchmark_mosaic_output"],  # benchmark mosaic
                 agreement_output_path,
@@ -394,12 +375,7 @@ class PolygonPipeline:
         # Wait for all agreement tasks
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Update database with expected output paths (status already set in nomad_service.py)
-        for i, result in enumerate(results):
-            if not isinstance(result, Exception) and self.log_db:
-                # Agreement jobs produce both the agreement map and metrics file
-                output_paths = [agreement_output_paths[i], metrics_output_paths[i]]
-                await self.log_db.update_job_status(result, self.pipeline_id, "dispatched", "agreement", output_paths)
+        # Job status updates are handled by job monitor
 
         # Build final scenario results
         scenario_results = []
@@ -466,7 +442,7 @@ class PolygonPipeline:
 
         # Create job metadata and run
         meta = self._create_inundation_meta(
-            scenario_id, parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
+            self.pipeline_id, parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
         )
 
         job_id = await self.nomad.run_job(
