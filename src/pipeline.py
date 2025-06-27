@@ -294,7 +294,7 @@ class PolygonPipeline:
 
         # Build intermediate results for agreement stage
         mosaic_results = []
-        for hand_result, benchmark_result, scenario in zip(hand_results, benchmark_results, valid_scenarios):
+        for scenario_index, (hand_result, benchmark_result, scenario) in enumerate(zip(hand_results, benchmark_results, valid_scenarios)):
             scenario_id = scenario["scenario_id"]
 
             # Check if both mosaics succeeded
@@ -309,13 +309,13 @@ class PolygonPipeline:
             # Only create result if both mosaics succeeded
             if not hand_failed and not benchmark_failed:
                 logger.debug(
-                    f"[{scenario_id}] Mosaic stage complete → HAND: {hand_output_paths[i]}, Benchmark: {benchmark_output_paths[i]}"
+                    f"[{scenario_id}] Mosaic stage complete → HAND: {hand_output_paths[scenario_index]}, Benchmark: {benchmark_output_paths[scenario_index]}"
                 )
                 mosaic_results.append(
                     {
                         **scenario,  # Include original scenario data
-                        "mosaic_output": hand_output_paths[i],
-                        "benchmark_mosaic_output": benchmark_output_paths[i],
+                        "mosaic_output": hand_output_paths[scenario_index],
+                        "benchmark_mosaic_output": benchmark_output_paths[scenario_index],
                     }
                 )
             else:
@@ -381,7 +381,7 @@ class PolygonPipeline:
 
         # Build final scenario results
         scenario_results = []
-        for result, scenario in zip(results, mosaic_results):
+        for result_index, (result, scenario) in enumerate(zip(results, mosaic_results)):
             scenario_id = scenario["scenario_id"]
 
             # Check if agreement job succeeded
@@ -390,7 +390,7 @@ class PolygonPipeline:
                 continue
 
             logger.debug(
-                f"[{scenario_id}] Pipeline complete → Agreement: {agreement_output_paths[i]}, Metrics: {metrics_output_paths[i]}"
+                f"[{scenario_id}] Pipeline complete → Agreement: {agreement_output_paths[result_index]}, Metrics: {metrics_output_paths[result_index]}"
             )
             scenario_results.append(
                 {
@@ -400,8 +400,8 @@ class PolygonPipeline:
                     "flowfile_path": scenario["flowfile_path"],
                     "mosaic_output": scenario["mosaic_output"],
                     "benchmark_mosaic_output": scenario["benchmark_mosaic_output"],
-                    "agreement_output": agreement_output_paths[i],
-                    "agreement_metrics_path": metrics_output_paths[i],
+                    "agreement_output": agreement_output_paths[result_index],
+                    "agreement_metrics_path": metrics_output_paths[result_index],
                 }
             )
 
