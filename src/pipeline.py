@@ -247,12 +247,13 @@ class PolygonPipeline:
                 f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/HAND_mosaic.tif"
             )
-            hand_meta = self._create_mosaic_meta(self.pipeline_id, valid_outputs, hand_output_path)
+            hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
             hand_task = asyncio.create_task(
                 self.nomad.run_job(
                     self.config.jobs.fim_mosaicker,
                     instance_prefix=f"hand-mosaic-{scenario_id}",
                     meta=hand_meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
                 )
             )
             hand_tasks.append(hand_task)
@@ -263,12 +264,13 @@ class PolygonPipeline:
                 f"s3://{self.config.s3.bucket}/{self.config.s3.base_prefix}/"
                 f"pipeline_{self.pipeline_id}/scenario_{scenario_id}/benchmark_mosaic.tif"
             )
-            benchmark_meta = self._create_mosaic_meta(self.pipeline_id, benchmark_rasters, benchmark_output_path)
+            benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
             benchmark_task = asyncio.create_task(
                 self.nomad.run_job(
                     self.config.jobs.fim_mosaicker,
                     instance_prefix=f"bench-mosaic-{scenario_id}",
                     meta=benchmark_meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
                 )
             )
             benchmark_tasks.append(benchmark_task)
@@ -352,7 +354,6 @@ class PolygonPipeline:
 
             # Create agreement job metadata
             meta = self._create_agreement_meta(
-                self.pipeline_id,
                 scenario["mosaic_output"],  # candidate (HAND mosaic)
                 scenario["benchmark_mosaic_output"],  # benchmark mosaic
                 agreement_output_path,
@@ -364,6 +365,7 @@ class PolygonPipeline:
                     self.config.jobs.agreement_maker,
                     instance_prefix=f"agree-{scenario_id}",
                     meta=meta.model_dump(),
+                    pipeline_id=self.pipeline_id,
                 )
             )
             tasks.append(task)
@@ -442,24 +444,24 @@ class PolygonPipeline:
 
         # Create job metadata and run
         meta = self._create_inundation_meta(
-            self.pipeline_id, parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
+            parquet_path, flowfile_s3_path, f"{base_path}/inundation_output.tif"
         )
 
         job_id = await self.nomad.run_job(
             self.config.jobs.hand_inundator,
-            instance_prefix=f"inund-{scenario_id}-{str(catch_id)}",
+            instance_prefix=f"inund-{scenario_id}-catch-{str(catch_id)}---",
             meta=meta.model_dump(),
+            pipeline_id=self.pipeline_id,
         )
         collector.append(job_id)
         logger.debug(f"[{scenario_id}/{catch_id}] inundator done → {job_id}")
         return job_id
 
     def _create_inundation_meta(
-        self, pipeline_id: str, catchment_path: str, forecast_path: str, output_path: str
+        self, catchment_path: str, forecast_path: str, output_path: str
     ) -> InundationDispatchMeta:
         """Create inundation job metadata using existing DispatchMetaBase."""
         return InundationDispatchMeta(
-            pipeline_id=pipeline_id,
             catchment_data_path=catchment_path,
             forecast_path=forecast_path,
             output_path=output_path,
@@ -470,10 +472,9 @@ class PolygonPipeline:
             aws_session_token=self.config.s3.AWS_SESSION_TOKEN or "",
         )
 
-    def _create_mosaic_meta(self, pipeline_id: str, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
+    def _create_mosaic_meta(self, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
         """Create mosaic job metadata using existing DispatchMetaBase."""
         return MosaicDispatchMeta(
-            pipeline_id=pipeline_id,
             raster_paths=raster_paths,
             output_path=output_path,
             fim_type=self.config.defaults.fim_type,
@@ -484,11 +485,10 @@ class PolygonPipeline:
         )
 
     def _create_agreement_meta(
-        self, pipeline_id: str, candidate_path: str, benchmark_path: str, output_path: str, metrics_path: str = ""
+        self, candidate_path: str, benchmark_path: str, output_path: str, metrics_path: str = ""
     ) -> AgreementDispatchMeta:
         """Create agreement job metadata using existing DispatchMetaBase."""
         return AgreementDispatchMeta(
-            pipeline_id=pipeline_id,
             candidate_path=candidate_path,
             benchmark_path=benchmark_path,
             output_path=output_path,

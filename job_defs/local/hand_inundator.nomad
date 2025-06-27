@@ -4,7 +4,6 @@ job "hand_inundator" {
 
   parameterized {
     meta_required = [
-      "pipeline_id",
       "catchment_data_path",
       "forecast_path",
       "output_path",

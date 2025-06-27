@@ -57,7 +57,7 @@ class NomadJobMonitor:
 
         self._contexts.clear()
 
-    async def track_job(self, job_id: str, meta: Dict[str, Any]) -> JobContext:
+    async def track_job(self, job_id: str, meta: Dict[str, Any], pipeline_id: str) -> JobContext:
         """
         Register a DispatchedJobID. Returns a JobContext with:
           - alloc_fut: timeout for scheduling
@@ -66,8 +66,6 @@ class NomadJobMonitor:
         if job_id in self._contexts:
             return self._contexts[job_id]
 
-        # Extract pipeline_id from meta
-        pipeline_id = meta.get("pipeline_id", "")
         ctx = JobContext(meta, pipeline_id)
         self._contexts[job_id] = ctx
         return ctx
