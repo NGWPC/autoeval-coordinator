@@ -12,10 +12,8 @@ import aiohttp
 import geopandas as gpd
 
 from data_service import DataService
-from job_monitor import NomadJobMonitor
 from load_config import AppConfig, load_config
-from nomad_api import NomadApiClient
-from nomad_service import NomadService
+from nomad_job_manager import NomadJobManager
 from pipeline_log_db import PipelineLogDB
 from pipeline_stages import AgreementStage, InundationStage, MosaicStage
 from pipeline_utils import PathFactory, PipelineResult
@@ -35,7 +33,7 @@ class PolygonPipeline:
     def __init__(
         self,
         config: AppConfig,
-        nomad: NomadService,
+        nomad: NomadJobManager,
         data_svc: DataService,
         polygon_gdf: gpd.GeoDataFrame,
         pipeline_id: str,
@@ -136,12 +134,10 @@ class PolygonPipeline:
                 self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id
             )
 
-            # Run stages sequentially
             results = await inundation_stage.run(results)
             results = await mosaic_stage.run(results)
             results = await agreement_stage.run(results)
 
-            # Count successful scenarios
             successful_results = [r for r in results if r.status == "completed"]
             total_attempted = len([r for r in results if r.status != "pending"])
 
@@ -194,14 +190,17 @@ if __name__ == "__main__":
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
-            api = NomadApiClient(cfg, session)
-
             log_db = PipelineLogDB("pipeline_log.db")
             await log_db.initialize()
 
-            monitor = NomadJobMonitor(api, log_db)
-            await monitor.start()
-            nomad = NomadService(api, monitor)
+            nomad = NomadJobManager(
+                nomad_addr=cfg.nomad.address,
+                namespace=cfg.nomad.namespace,
+                token=cfg.nomad.token,
+                session=session,
+                log_db=log_db,
+            )
+            await nomad.start()
 
             data_svc = DataService(cfg)
 
@@ -226,7 +225,7 @@ if __name__ == "__main__":
                 print(json.dumps(result, indent=2))
             finally:
                 await pipeline.cleanup()
-                await monitor.stop()
+                await nomad.stop()
                 await log_db.close()
                 data_svc.cleanup()
 
