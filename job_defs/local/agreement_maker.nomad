@@ -1,23 +1,27 @@
-job "fim_mosaicker" {
+job "agreement_maker" {
   datacenters = ["dc1"] 
   type        = "batch"
 
   parameterized {
     meta_required = [
       "pipeline_id",
-      "raster_paths", 
+      "candidate_path", 
+      "benchmark_path",
       "output_path",
       "fim_type",
     ]
     meta_optional = [
-      "registry_token", # Required if using private registry auth below
+      "metrics_path",
+      "clip_geoms",
+      "registry_token", # Required if using private registry 
       "aws_access_key",
       "aws_secret_key",
       "aws_session_token",
     ]
   }
 
-  group "mosaicker-processor" {
+  group "agreement-processor" {
+    # Don't attempt restart since don't want to retry on most errors
     restart {
       attempts = 0
       mode     = "fail"
@@ -27,24 +31,28 @@ job "fim_mosaicker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
         force_pull = true
 
         auth {
-          username = "ReadOnly_NGWPC_Group_Deploy_Token"
+          username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
           password = "${NOMAD_META_registry_token}"
         }
-
         command = "python3"
         args = [
-          "/deploy/fim_mosaicker/mosaic.py",
-          "--raster_paths", "${NOMAD_META_raster_paths}",
-          "--mosaic_output_path", "${NOMAD_META_output_path}",
+          "/deploy/agreement_maker/make_agreement.py",
           "--fim_type", "${NOMAD_META_fim_type}",
+          "--candidate_path", "${NOMAD_META_candidate_path}",
+          "--benchmark_path", "${NOMAD_META_benchmark_path}",
+          "--output_path", "${NOMAD_META_output_path}",
+          "--metrics_path", "${NOMAD_META_metrics_path}",
+          "--clip_geoms", "${NOMAD_META_clip_geoms}",
         ]
 
       }
 
+      # --- Environment Variables (for AWS SDK inside container) ---
+      # Pass AWS creds if provided in meta, otherwise rely on IAM instance profile
       env {
         AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
@@ -61,22 +69,25 @@ job "fim_mosaicker" {
         VSI_CACHE_SIZE = "268435456"
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
-        # Output Configuration
-        MOSAIC_BLOCK_SIZE = "512"
-        MOSAIC_COMPRESS_TYPE = "LZW"
-        MOSAIC_PREDICTOR = "2"
+        # Processing Configuration
+        DASK_CLUST_MAX_MEM = "12GB"
+        RASTERIO_CHUNK_SIZE = "4096"
+        DEFAULT_WRITE_BLOCK_SIZE = "4096"
+        COG_BLOCKSIZE = "512"
+        COG_OVERVIEW_LEVEL = "4"
         
         # Nodata Values
         EXTENT_NODATA_VALUE = "255"
-        DEPTH_NODATA_VALUE = "-9999"
+        
+        # Processing Defaults
+        DEFAULT_CLIP_OPERATION = "exclude"
         
         # Logging
         LOG_SUCCESS_LEVEL_NUM = "25"
       }
 
       resources {
-        cpu    = 1000 
-        memory = 4096 
+        memory = 12000 # Higher memory for large raster processing
       }
 
       logs {
