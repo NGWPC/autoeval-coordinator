@@ -10,3 +10,4 @@ autoeval-jobs/
 inputs/
 pipeline_log.db
 .vscode/
+viztracer-visualization.json
