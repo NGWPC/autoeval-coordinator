@@ -32,7 +32,7 @@ job "fim_mosaicker" {
 
       config {
         # use last known stable version in test
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.1" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
         force_pull = true
 
         auth {

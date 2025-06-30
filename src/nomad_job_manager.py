@@ -81,6 +81,7 @@ class NomadJobManager:
     ):
         self.nomad_addr = nomad_addr
         self.namespace = namespace
+        self.token = token
         self.session = session
         self.log_db = log_db
 
@@ -234,8 +235,12 @@ class NomadJobManager:
             "index": self._event_index,
             "namespace": self.namespace,
         }
+        
+        headers = {}
+        if self.token:
+            headers["X-Nomad-Token"] = self.token
 
-        async with self.session.get(url, params=params, timeout=None) as response:
+        async with self.session.get(url, params=params, headers=headers, timeout=None) as response:
             response.raise_for_status()
 
             buffer = b""
