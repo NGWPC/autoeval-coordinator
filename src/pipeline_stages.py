@@ -3,20 +3,57 @@ import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
+from pydantic import BaseModel, field_serializer
+
 from load_config import AppConfig
-from nomad_service import (
-    AgreementDispatchMeta,
-    InundationDispatchMeta,
-    MosaicDispatchMeta,
-)
 from pipeline_utils import PathFactory, PipelineResult
 
 logger = logging.getLogger(__name__)
 
 
-class PipelineStage(ABC):
-    """Abstract base class for pipeline stages."""
+class DispatchMetaBase(BaseModel):
+    """
+    Common parameters for all dispatched jobs.
+    """
 
+    fim_type: str
+    registry_token: str
+    aws_access_key: str
+    aws_secret_key: str
+    aws_session_token: str
+
+
+class InundationDispatchMeta(DispatchMetaBase):
+    """
+    Metadata for the HAND inundator job.
+    """
+
+    catchment_data_path: str
+    forecast_path: str
+    output_path: str
+
+
+class MosaicDispatchMeta(DispatchMetaBase):
+    raster_paths: List[str]
+    output_path: str
+
+    @field_serializer("raster_paths", mode="plain")
+    def _ser_raster(self, v: List[str], info):
+        # mosaic.py expects space-separated paths
+        return " ".join(v)
+
+
+class AgreementDispatchMeta(DispatchMetaBase):
+    """
+    Metadata for the agreement_maker job.
+    """
+
+    candidate_path: str
+    benchmark_path: str
+    output_base_path: str
+
+
+class PipelineStage(ABC):
     def __init__(self, config: AppConfig, nomad_service, data_service, path_factory: PathFactory, pipeline_id: str):
         self.config = config
         self.nomad = nomad_service
@@ -35,15 +72,12 @@ class PipelineStage(ABC):
         pass
 
     def log_stage_start(self, stage_name: str, input_count: int):
-        """Log the start of a stage."""
         logger.debug(f"[{self.pipeline_id}] {stage_name}: Starting with {input_count} inputs")
 
     def log_stage_complete(self, stage_name: str, success_count: int, total_count: int):
-        """Log the completion of a stage."""
         logger.debug(f"[{self.pipeline_id}] {stage_name}: {success_count}/{total_count} succeeded")
 
     def _get_base_meta_kwargs(self) -> Dict[str, str]:
-        """Get common metadata kwargs for all job types."""
         return {
             "fim_type": self.config.defaults.fim_type,
             "registry_token": self.config.nomad.registry_token or "",
@@ -90,7 +124,6 @@ class InundationStage(PipelineStage):
                 tasks.append(task)
                 task_metadata.append((result, catch_id, output_path))
 
-        # Wait for all tasks
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Group results by scenario and validate outputs
@@ -139,12 +172,11 @@ class InundationStage(PipelineStage):
             result.flowfile_path, self.path_factory.catchment_path(result.scenario_id, catch_id, "flowfile.csv")
         )
 
-        # Create job metadata and run
         meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
 
-        job_id = await self.nomad.run_job(
+        job_id, _ = await self.nomad.dispatch_and_track(
             self.config.jobs.hand_inundator,
-            instance_prefix=f"inund-{result.scenario_id}-catch-{str(catch_id)}---",
+            prefix=f"inund-{result.scenario_id}-catch-{str(catch_id)}---",
             meta=meta.model_dump(),
             pipeline_id=self.pipeline_id,
         )
@@ -154,7 +186,6 @@ class InundationStage(PipelineStage):
     def _create_inundation_meta(
         self, catchment_path: str, forecast_path: str, output_path: str
     ) -> InundationDispatchMeta:
-        """Create inundation job metadata."""
         return InundationDispatchMeta(
             catchment_data_path=catchment_path,
             forecast_path=forecast_path,
@@ -192,9 +223,9 @@ class MosaicStage(PipelineStage):
             result.set_path("mosaic", "hand", hand_output_path)
             hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
             hand_task = asyncio.create_task(
-                self.nomad.run_job(
+                self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    instance_prefix=f"hand-mosaic-{result.scenario_id}",
+                    prefix=f"hand-mosaic-{result.scenario_id}",
                     meta=hand_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -206,9 +237,9 @@ class MosaicStage(PipelineStage):
             result.set_path("mosaic", "benchmark", benchmark_output_path)
             benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
             benchmark_task = asyncio.create_task(
-                self.nomad.run_job(
+                self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    instance_prefix=f"bench-mosaic-{result.scenario_id}",
+                    prefix=f"bench-mosaic-{result.scenario_id}",
                     meta=benchmark_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -220,7 +251,6 @@ class MosaicStage(PipelineStage):
             self.log_stage_complete("Mosaic", 0, len(valid_results))
             return []
 
-        # Wait for all mosaic tasks
         hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
         benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
 
@@ -246,7 +276,6 @@ class MosaicStage(PipelineStage):
         return successful_results
 
     def _create_mosaic_meta(self, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
-        """Create mosaic job metadata."""
         return MosaicDispatchMeta(
             raster_paths=raster_paths,
             output_path=output_path,
@@ -284,9 +313,9 @@ class AgreementStage(PipelineStage):
             )
 
             task = asyncio.create_task(
-                self.nomad.run_job(
+                self.nomad.dispatch_and_track(
                     self.config.jobs.agreement_maker,
-                    instance_prefix=f"agree-{result.scenario_id}",
+                    prefix=f"agree-{result.scenario_id}",
                     meta=meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -298,7 +327,6 @@ class AgreementStage(PipelineStage):
             self.log_stage_complete("Agreement", 0, len(valid_results))
             return []
 
-        # Wait for all agreement tasks
         task_job_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         # Update results based on success/failure
