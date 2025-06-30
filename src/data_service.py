@@ -72,7 +72,6 @@ class DataService:
         Raises:
             ValueError: If no polygon found for HUC code
         """
-        # Read HUC code from file
         with open(huc_list_path, "r") as f:
             lines = f.read().strip().split("\n")
 
@@ -107,7 +106,6 @@ class DataService:
         if len(filtered_gdf) == 0:
             raise ValueError(f"No polygon found for HUC code {huc_code} in layer {layer_name}")
 
-        # Convert to EPSG:4326
         if filtered_gdf.crs and filtered_gdf.crs.to_epsg() != 4326:
             filtered_gdf = filtered_gdf.to_crs("EPSG:4326")
 

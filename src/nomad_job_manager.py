@@ -238,27 +238,32 @@ class NomadJobManager:
         async with self.session.get(url, params=params, timeout=None) as response:
             response.raise_for_status()
 
-            async for line in response.content:
+            buffer = b""
+            async for chunk in response.content.iter_chunked(8 * 1024):
                 if self._shutdown_event.is_set():
                     break
 
-                line = line.decode("utf-8").strip()
-                if not line or not line.startswith('{"'):
-                    continue
+                buffer += chunk
+                while b"\n" in buffer:
+                    line_bytes, buffer = buffer.split(b"\n", 1)
+                    line = line_bytes.decode("utf-8").strip()
 
-                try:
-                    data = json.loads(line)
-                    if "Index" in data:
-                        self._event_index = data["Index"]
+                    if not line or line == "{}":
+                        continue
 
-                    events = data.get("Events", [])
-                    for event in events:
-                        await self._handle_event(event)
+                    try:
+                        data = json.loads(line)
+                        if "Index" in data:
+                            self._event_index = data["Index"]
 
-                except json.JSONDecodeError:
-                    logger.debug(f"Failed to parse event line: {line}")
-                except Exception as e:
-                    logger.error(f"Error handling event: {e}")
+                        events = data.get("Events", [])
+                        for event in events:
+                            await self._handle_event(event)
+
+                    except json.JSONDecodeError:
+                        logger.debug(f"Failed to parse event line: {line}")
+                    except Exception as e:
+                        logger.error(f"Error handling event: {e}")
 
     async def _handle_event(self, event: Dict[str, Any]):
         """Handle a single Nomad event."""
