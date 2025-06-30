@@ -52,7 +52,7 @@ class DataService:
                 datetime_filter=config.stac.datetime_filter,
             )
 
-        # Initialize FlowfileCombiner (always needed for processing STAC results)
+        # Initialize FlowfileCombiner
         self.flowfile_combiner = FlowfileCombiner(
             output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
         )
