@@ -8,7 +8,6 @@ job "fim_mosaicker" {
       "raster_paths", 
       "output_path",
       "fim_type",
-      "gdal_cache_max",
     ]
     meta_optional = [
       "registry_token", # Required if using private registry auth below
@@ -51,7 +50,28 @@ job "fim_mosaicker" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
-        GDAL_CACHEMAX         = "${NOMAD_META_gdal_cache_max}"
+        GDAL_CACHEMAX         = "1024"
+        
+        # GDAL Configuration
+        GDAL_NUM_THREADS = "1"
+        GDAL_TIFF_DIRECT_IO = "YES"
+        GDAL_DISABLE_READDIR_ON_OPEN = "TRUE"
+        CPL_LOG_ERRORS = "ON"
+        CPL_VSIL_CURL_ALLOWED_EXTENSIONS = ".tif,.vrt"
+        VSI_CACHE_SIZE = "268435456"
+        CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
+        
+        # Output Configuration
+        MOSAIC_BLOCK_SIZE = "512"
+        MOSAIC_COMPRESS_TYPE = "LZW"
+        MOSAIC_PREDICTOR = "2"
+        
+        # Nodata Values
+        EXTENT_NODATA_VALUE = "255"
+        DEPTH_NODATA_VALUE = "-9999"
+        
+        # Logging
+        LOG_SUCCESS_LEVEL_NUM = "25"
       }
 
       resources {
