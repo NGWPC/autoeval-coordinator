@@ -9,7 +9,6 @@ job "fim_mosaicker" {
 
   parameterized {
     meta_required = [
-      "pipeline_id",
       "raster_paths", 
       "output_path",
       "fim_type",
@@ -33,7 +32,7 @@ job "fim_mosaicker" {
 
       config {
         # use last known stable version in test
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.1" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
         force_pull = true
 
         auth {
@@ -78,16 +77,13 @@ job "fim_mosaicker" {
         MOSAIC_COMPRESS_TYPE = "LZW"
         MOSAIC_PREDICTOR = "2"
         
-        # Nodata Values
         EXTENT_NODATA_VALUE = "255"
         DEPTH_NODATA_VALUE = "-9999"
         
-        # Logging
         LOG_SUCCESS_LEVEL_NUM = "25"
       }
 
       resources {
-        cpu    = 1000 
         memory = 6048
       }
 
