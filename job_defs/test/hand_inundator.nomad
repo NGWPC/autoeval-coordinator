@@ -9,7 +9,6 @@ job "hand_inundator" {
 
   parameterized {
     meta_required = [
-      "pipeline_id",
       "catchment_data_path",
       "forecast_path",
       "output_path",
@@ -35,7 +34,7 @@ job "hand_inundator" {
 
       config {
         # use last known stable version in test
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.1" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
         force_pull = true
 
         auth {
@@ -62,8 +61,6 @@ job "hand_inundator" {
         }
       }
 
-      # --- Environment Variables (for AWS SDK inside container) ---
-      # Pass AWS creds if provided in meta, otherwise rely on IAM instance profile
       env {
         AWS_DEFAULT_REGION = "us-east-1"
         GDAL_CACHEMAX         = "1024"
