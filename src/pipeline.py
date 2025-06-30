@@ -125,7 +125,6 @@ class PolygonPipeline:
         logger.debug(f"[{self.pipeline_id}] Processing {len(results)} scenarios with stage-based parallelism")
 
         try:
-            # Create stages
             inundation_stage = InundationStage(
                 self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.catchments
             )
@@ -163,7 +162,6 @@ class PolygonPipeline:
             }
 
     async def cleanup(self) -> None:
-        """Clean up temporary resources."""
         self.tmp.cleanup()
         logger.debug(f"[{self.pipeline_id}] cleaned up temp files")
 
@@ -204,7 +202,6 @@ if __name__ == "__main__":
 
             data_svc = DataService(cfg)
 
-            # Load geometry - either from WBD or mock data
             if args.use_mock_polygon:
                 logging.info("Using polygon from mock data file")
                 polygon_gdf = data_svc.load_polygon_gdf_from_file(cfg.mock_data_paths.polygon_data_file)

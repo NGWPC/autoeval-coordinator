@@ -50,7 +50,9 @@ class AgreementDispatchMeta(DispatchMetaBase):
 
     candidate_path: str
     benchmark_path: str
-    output_base_path: str
+    output_path: str
+    metrics_path: str = ""
+    clip_geoms: str = ""
 
 
 class PipelineStage(ABC):
@@ -346,7 +348,6 @@ class AgreementStage(PipelineStage):
     def _create_agreement_meta(
         self, candidate_path: str, benchmark_path: str, output_path: str, metrics_path: str = ""
     ) -> AgreementDispatchMeta:
-        """Create agreement job metadata."""
         return AgreementDispatchMeta(
             candidate_path=candidate_path,
             benchmark_path=benchmark_path,

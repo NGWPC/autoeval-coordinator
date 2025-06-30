@@ -21,8 +21,6 @@ logger = logging.getLogger(__name__)
 
 
 class JobStatus(Enum):
-    """Unified job status enum."""
-
     DISPATCHED = "dispatched"
     ALLOCATED = "allocated"
     RUNNING = "running"
@@ -44,20 +42,14 @@ NOMAD_STATUS_MAP = {
 
 
 class NomadError(Exception):
-    """Base exception for Nomad operations."""
-
     pass
 
 
 class JobNotFoundError(NomadError):
-    """Job doesn't exist in Nomad."""
-
     pass
 
 
 class JobDispatchError(NomadError):
-    """Failed to dispatch job."""
-
     pass
 
 
@@ -79,8 +71,6 @@ class JobTracker:
 
 
 class NomadJobManager:
-    """Unified interface for Nomad job lifecycle management."""
-
     def __init__(
         self,
         nomad_addr: str,
@@ -94,7 +84,6 @@ class NomadJobManager:
         self.session = session
         self.log_db = log_db
 
-        # Parse the address into host/port/scheme
         parsed = urlparse(str(nomad_addr))
         self.client = nomad.Nomad(
             host=parsed.hostname,
@@ -109,17 +98,14 @@ class NomadJobManager:
         self._monitoring_task: Optional[asyncio.Task] = None
         self._shutdown_event = asyncio.Event()
 
-        # Event stream state
         self._event_index = 0
 
     async def start(self):
-        """Start the job manager and event monitoring."""
         if not self._monitoring_task:
             self._monitoring_task = asyncio.create_task(self._monitor_events())
             logger.info("Started Nomad job manager")
 
     async def stop(self):
-        """Stop the job manager and cleanup."""
         self._shutdown_event.set()
         if self._monitoring_task:
             await self._monitoring_task
@@ -156,10 +142,8 @@ class NomadJobManager:
         Returns:
             Tuple of (job_id, exit_code)
         """
-        # Dispatch the job
         job_id = await self._dispatch_job(job_name, prefix, meta)
 
-        # Create tracker
         tracker = JobTracker(
             job_id=job_id,
             pipeline_id=pipeline_id or "unknown",
@@ -172,10 +156,8 @@ class NomadJobManager:
         await self._update_job_status(tracker)
 
         try:
-            # Wait for allocation
             await self._wait_for_allocation(tracker)
 
-            # Wait for completion
             await self._wait_for_completion(tracker)
 
             if tracker.error:
@@ -184,7 +166,6 @@ class NomadJobManager:
             return job_id, tracker.exit_code or 0
 
         finally:
-            # Cleanup
             self._active_jobs.pop(job_id, None)
 
     async def _dispatch_job(
@@ -215,7 +196,6 @@ class NomadJobManager:
             raise JobDispatchError(f"Failed to dispatch job {job_name}: {e}")
 
     async def _wait_for_allocation(self, tracker: JobTracker):
-        """Wait for job to be allocated."""
         while True:
             if tracker.allocation_id:
                 return
@@ -224,7 +204,6 @@ class NomadJobManager:
             await asyncio.sleep(1)
 
     async def _wait_for_completion(self, tracker: JobTracker):
-        """Wait for job to complete."""
         await tracker.completion_event.wait()
 
     async def _monitor_events(self):
@@ -247,7 +226,6 @@ class NomadJobManager:
                 await asyncio.sleep(wait_time)
 
     async def _process_event_stream(self):
-        """Process the Nomad event stream."""
         if not self.session:
             self.session = aiohttp.ClientSession()
 
@@ -322,13 +300,11 @@ class NomadJobManager:
             # Update database
             await self._update_job_status(tracker)
 
-            # Signal completion
             if new_status in (JobStatus.SUCCEEDED, JobStatus.FAILED, JobStatus.LOST):
                 tracker.completion_event.set()
                 logger.info(f"Job {job_id} completed with status {new_status}")
 
     async def _update_job_status(self, tracker: JobTracker):
-        """Update job status in the database."""
         if not self.log_db:
             return
 
@@ -352,7 +328,6 @@ class NomadJobManager:
             logger.error(f"Failed to update job status in database: {e}")
 
     async def get_job_status(self, job_id: str) -> Dict[str, Any]:
-        """Get current status of a job."""
         if job_id in self._active_jobs:
             tracker = self._active_jobs[job_id]
             return {
@@ -374,7 +349,3 @@ class NomadJobManager:
         except Exception as e:
             logger.error(f"Failed to get job status: {e}")
             raise JobNotFoundError(f"Job {job_id} not found")
-
-    def get_active_jobs(self) -> List[str]:
-        """Get list of currently active job IDs."""
-        return list(self._active_jobs.keys())
