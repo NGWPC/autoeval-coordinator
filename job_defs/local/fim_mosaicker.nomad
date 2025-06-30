@@ -2,11 +2,6 @@ job "fim_mosaicker" {
   datacenters = ["dc1"] 
   type        = "batch"
 
-  constraint {
-    attribute = "${node.class}"
-    value     = "linux"
-  }
-
   parameterized {
     meta_required = [
       "pipeline_id",
@@ -33,7 +28,7 @@ job "fim_mosaicker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
         force_pull = true
 
         auth {

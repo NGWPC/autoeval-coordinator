@@ -33,7 +33,8 @@ job "fim_mosaicker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs" 
+        # use last known stable version in test
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.1" 
         force_pull = true
 
         auth {
@@ -67,7 +68,7 @@ job "fim_mosaicker" {
 
       resources {
         cpu    = 1000 
-        memory = 2048
+        memory = 6048
       }
 
       logs {
