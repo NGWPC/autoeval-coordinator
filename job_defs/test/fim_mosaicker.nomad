@@ -84,7 +84,6 @@ job "fim_mosaicker" {
       }
 
       resources {
-        cpu    = 1000 
         memory = 6048
       }
 

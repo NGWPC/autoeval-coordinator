@@ -1,11 +1,12 @@
-import logging
 import asyncio
-from typing import Any, Dict, List
 import json
+import logging
+from typing import Any, Dict, List
+
 from pydantic import BaseModel, field_serializer
 
-from nomad_api import NomadApiClient
 from job_monitor import NomadJobMonitor
+from nomad_api import NomadApiClient
 
 
 class DispatchMetaBase(BaseModel):
@@ -15,7 +16,6 @@ class DispatchMetaBase(BaseModel):
 
     pipeline_id: str
     fim_type: str
-    gdal_cache_max: str
     registry_token: str
     aws_access_key: str
     aws_secret_key: str
@@ -39,7 +39,20 @@ class MosaicDispatchMeta(DispatchMetaBase):
 
     @field_serializer("raster_paths", mode="plain")
     def _ser_raster(self, v: List[str], info):
-        return json.dumps(v)
+        # mosaic.py expects space-separated paths
+        return " ".join(v)
+
+
+class AgreementDispatchMeta(DispatchMetaBase):
+    """
+    Metadata for the agreement_maker job.
+    """
+    
+    candidate_path: str
+    benchmark_path: str
+    output_path: str
+    metrics_path: str = ""
+    clip_geoms: str = ""
 
 
 class NomadService:
