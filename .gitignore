@@ -3,6 +3,7 @@ __pycache__/
 pipeline_config.yml
 config/pipeline_config.yml
 config/local_pipeline_config.yml
+config/docker_pipeline_config.yml
 mock_data/
 simple-eval-pipeline/
 autoeval-jobs/
@@ -11,3 +12,4 @@ inputs/
 pipeline_log.db
 .vscode/
 viztracer-visualization.json
+pipeline_trace.json
