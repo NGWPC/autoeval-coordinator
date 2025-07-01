@@ -61,8 +61,6 @@ job "hand_inundator" {
         }
       }
 
-      # --- Environment Variables (for AWS SDK inside container) ---
-      # Pass AWS creds if provided in meta, otherwise rely on IAM instance profile
       env {
         AWS_DEFAULT_REGION = "us-east-1"
         GDAL_CACHEMAX         = "1024"

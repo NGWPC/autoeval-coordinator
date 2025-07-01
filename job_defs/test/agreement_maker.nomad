@@ -50,8 +50,6 @@ job "agreement_maker" {
 
       }
 
-      # --- Environment Variables (for AWS SDK inside container) ---
-      # Pass AWS creds if provided in meta, otherwise rely on IAM instance profile
       env {
         AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
@@ -86,7 +84,6 @@ job "agreement_maker" {
       }
 
       resources {
-        cpu    = 2000 # Higher CPU for agreement computation
         memory = 8192 # Higher memory for large raster processing
       }
 
