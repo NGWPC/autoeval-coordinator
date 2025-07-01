@@ -77,16 +77,13 @@ job "fim_mosaicker" {
         MOSAIC_COMPRESS_TYPE = "LZW"
         MOSAIC_PREDICTOR = "2"
         
-        # Nodata Values
         EXTENT_NODATA_VALUE = "255"
         DEPTH_NODATA_VALUE = "-9999"
         
-        # Logging
         LOG_SUCCESS_LEVEL_NUM = "25"
       }
 
       resources {
-        cpu    = 1000 
         memory = 6048
       }
 
