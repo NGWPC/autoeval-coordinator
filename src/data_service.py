@@ -7,8 +7,8 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List
 
-import geopandas as gpd
 import fsspec
+import geopandas as gpd
 from botocore.exceptions import ClientError, NoCredentialsError
 from shapely.geometry import shape
 
@@ -28,11 +28,11 @@ class DataService:
         # Configure S3 filesystem options from environment
         self._s3_options = {}
         if config.s3.AWS_ACCESS_KEY_ID:
-            self._s3_options['key'] = config.s3.AWS_ACCESS_KEY_ID
+            self._s3_options["key"] = config.s3.AWS_ACCESS_KEY_ID
         if config.s3.AWS_SECRET_ACCESS_KEY:
-            self._s3_options['secret'] = config.s3.AWS_SECRET_ACCESS_KEY
+            self._s3_options["secret"] = config.s3.AWS_SECRET_ACCESS_KEY
         if config.s3.AWS_SESSION_TOKEN:
-            self._s3_options['token'] = config.s3.AWS_SESSION_TOKEN
+            self._s3_options["token"] = config.s3.AWS_SESSION_TOKEN
 
         # Initialize HandIndexQuerier if enabled
         self.hand_querier = None
@@ -57,83 +57,27 @@ class DataService:
             output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
         )
 
-    def load_geometry_from_wbd(self, gpkg_path: str, huc_list_path: str, index: int) -> tuple[gpd.GeoDataFrame, str]:
-        """
-        Load geometry from WBD National gpkg based on HUC code at given index.
-
-        Args:
-            gpkg_path: Path to WBD_National.gpkg
-            huc_list_path: Path to huc_list.txt
-            index: Index of HUC code to use from huc_list.txt
-
-        Returns:
-            Tuple of (GeoDataFrame with geometry converted to EPSG:4326, HUC code)
-
-        Raises:
-            ValueError: If no polygon found for HUC code
-        """
-        with open(huc_list_path, "r") as f:
-            lines = f.read().strip().split("\n")
-
-        if index >= len(lines) or index < 0:
-            raise ValueError(f"Index {index} out of range for huc_list.txt (has {len(lines)} lines)")
-
-        huc_code = lines[index].strip()
-        if not huc_code:
-            raise ValueError(f"Empty HUC code at index {index}")
-
-        # Determine HUC scale based on length
-        huc_length = len(huc_code)
-        if huc_length == 2:
-            layer_name = "WBDHU2"
-            huc_field = "HUC2"
-        elif huc_length == 4:
-            layer_name = "WBDHU4"
-            huc_field = "HUC4"
-        elif huc_length == 6:
-            layer_name = "WBDHU6"
-            huc_field = "HUC6"
-        elif huc_length == 8:
-            layer_name = "WBDHU8"
-            huc_field = "HUC8"
-        else:
-            raise ValueError(f"Invalid HUC code length {huc_length}. Expected 2, 4, 6, or 8 digits.")
-
-        # Load geodataframe from gpkg with SQL filter to avoid loading entire layer
-        sql_filter = f"SELECT * FROM {layer_name} WHERE {huc_field} = '{huc_code}'"
-        filtered_gdf = gpd.read_file(gpkg_path, sql=sql_filter)
-
-        if len(filtered_gdf) == 0:
-            raise ValueError(f"No polygon found for HUC code {huc_code} in layer {layer_name}")
-
-        if filtered_gdf.crs and filtered_gdf.crs.to_epsg() != 4326:
-            filtered_gdf = filtered_gdf.to_crs("EPSG:4326")
-
-        return filtered_gdf, huc_code
-
     def load_polygon_gdf_from_file(self, file_path: str) -> gpd.GeoDataFrame:
         """
-        Load polygon GeoDataFrame from a file (gpkg format).
-        
         Args:
             file_path: Path to the GeoDataFrame file
-            
+
         Returns:
             GeoDataFrame with polygon geometry
-            
+
         Raises:
             FileNotFoundError: If file doesn't exist
             ValueError: If file is empty or invalid
         """
         if not Path(file_path).exists():
             raise FileNotFoundError(f"Polygon data file not found: {file_path}")
-        
+
         try:
             gdf = gpd.read_file(file_path)
-            
+
             if len(gdf) == 0:
                 raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
-            
+
             # Ensure CRS is EPSG:4326
             if gdf.crs and gdf.crs.to_epsg() != 4326:
                 logging.info(f"Converting polygon data from {gdf.crs} to EPSG:4326")
@@ -141,10 +85,10 @@ class DataService:
             elif not gdf.crs:
                 logging.warning(f"No CRS found in {file_path}, assuming EPSG:4326")
                 gdf.set_crs("EPSG:4326", inplace=True)
-            
+
             logging.info(f"Loaded polygon GeoDataFrame with {len(gdf)} features from {file_path}")
             return gdf
-            
+
         except Exception as e:
             raise ValueError(f"Error loading GeoDataFrame from {file_path}: {e}")
 
@@ -383,14 +327,14 @@ class DataService:
     def _sync_copy_file(self, source_path: str, dest_uri: str):
         """Synchronous helper for copying files using fsspec."""
         # Create filesystem based on destination URI
-        if dest_uri.startswith('s3://'):
-            fs = fsspec.filesystem('s3', **self._s3_options)
+        if dest_uri.startswith("s3://"):
+            fs = fsspec.filesystem("s3", **self._s3_options)
         else:
-            fs = fsspec.filesystem('file')
-        
+            fs = fsspec.filesystem("file")
+
         # Copy file using fsspec
-        with open(source_path, 'rb') as src:
-            with fs.open(dest_uri, 'wb') as dst:
+        with open(source_path, "rb") as src:
+            with fs.open(dest_uri, "wb") as dst:
                 dst.write(src.read())
 
     async def check_s3_file_exists(self, s3_uri: str) -> bool:
@@ -416,7 +360,7 @@ class DataService:
     def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
         """Synchronous helper to check if S3 file exists."""
         try:
-            fs = fsspec.filesystem('s3', **self._s3_options)
+            fs = fsspec.filesystem("s3", **self._s3_options)
             return fs.exists(s3_uri)
         except (FileNotFoundError, NoCredentialsError, ClientError) as e:
             logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")

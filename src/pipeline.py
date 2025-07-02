@@ -168,10 +168,7 @@ class PolygonPipeline:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
-    parser.add_argument("--index", type=int, default=0, help="Which HUC index in the list to process")
-    parser.add_argument(
-        "--use-mock-polygon", action="store_true", help="Use polygon from mock data file instead of WBD"
-    )
+    parser.add_argument("--poly", type=str, help="Path to gpkg file containing a single polygon")
     parser.add_argument(
         "--config", default=os.path.join("config", "pipeline_config.yml"), help="Path to your YAML config"
     )
@@ -202,18 +199,20 @@ if __name__ == "__main__":
 
             data_svc = DataService(cfg)
 
-            if args.use_mock_polygon:
-                logging.info("Using polygon from mock data file")
-                polygon_gdf = data_svc.load_polygon_gdf_from_file(cfg.mock_data_paths.polygon_data_file)
-                # Use HUC code from config for mock data
-                huc_code = cfg.mock_data_paths.huc or f"mock_{args.index}"
-                pid = huc_code
-            else:
-                logging.info("Using polygon from WBD National gpkg")
-                polygon_gdf, huc_code = data_svc.load_geometry_from_wbd(
-                    cfg.wbd.gpkg_path, cfg.wbd.huc_list_path, args.index
-                )
-                pid = huc_code
+            # Use polygon file from args or fall back to config
+            polygon_file = args.poly or cfg.mock_data_paths.polygon_data_file
+            if not polygon_file:
+                raise ValueError("No polygon file specified. Use --poly or set polygon_data_file in config")
+
+            logging.info(f"Loading polygon from: {polygon_file}")
+            polygon_gdf = data_svc.load_polygon_gdf_from_file(polygon_file)
+
+            # Use the first feature only
+            if len(polygon_gdf) > 1:
+                logging.warning(f"Found {len(polygon_gdf)} features in {polygon_file}, using only the first one")
+                polygon_gdf = polygon_gdf.iloc[[0]]
+
+            pid = "pipeline_run"  # Placeholder pid might end up not being necessary
 
             pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pid, log_db)
 
