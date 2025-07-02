@@ -23,8 +23,6 @@ class FlowfileCombiner:
 
     def __init__(self, output_dir: str = "combined_flowfiles"):
         """
-        Initialize the FlowfileCombiner.
-
         Args:
             output_dir: Directory to save combined flowfiles
         """

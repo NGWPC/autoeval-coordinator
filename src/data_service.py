@@ -8,26 +8,32 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import geopandas as gpd
-import smart_open  # Import smart_open
-from botocore.exceptions import NoCredentialsError, ClientError
+import fsspec
+from botocore.exceptions import ClientError, NoCredentialsError
 from shapely.geometry import shape
 
-from load_config import AppConfig
-from hand_index_querier import HandIndexQuerier
-from stac_querier import StacQuerier
 from flowfile_combiner import FlowfileCombiner
+from hand_index_querier import HandIndexQuerier
+from load_config import AppConfig
+from stac_querier import StacQuerier
 
 
 class DataService:
-    """Service to query data sources and interact with S3 via smart_open."""
+    """Service to query data sources and interact with S3 via fsspec."""
 
     def __init__(self, config: AppConfig):
         self.config = config
         self.mock_data_path = config.mock_data_paths.mock_catchment_data
         self._cached_parquet_files = None
-        # Optional: configure transport params for smart_open if needed
-        self._transport_params = None  # E.g. config.s3.transport_params
-        
+        # Configure S3 filesystem options from environment
+        self._s3_options = {}
+        if config.s3.AWS_ACCESS_KEY_ID:
+            self._s3_options['key'] = config.s3.AWS_ACCESS_KEY_ID
+        if config.s3.AWS_SECRET_ACCESS_KEY:
+            self._s3_options['secret'] = config.s3.AWS_SECRET_ACCESS_KEY
+        if config.s3.AWS_SESSION_TOKEN:
+            self._s3_options['token'] = config.s3.AWS_SESSION_TOKEN
+
         # Initialize HandIndexQuerier if enabled
         self.hand_querier = None
         if config.hand_index.enabled:
@@ -35,7 +41,7 @@ class DataService:
                 partitioned_base_path=config.hand_index.partitioned_base_path,
                 overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
             )
-        
+
         # Initialize StacQuerier if enabled
         self.stac_querier = None
         if config.stac and config.stac.enabled:
@@ -45,11 +51,102 @@ class DataService:
                 overlap_threshold_percent=config.stac.overlap_threshold_percent,
                 datetime_filter=config.stac.datetime_filter,
             )
-        
-        # Initialize FlowfileCombiner (always needed for processing STAC results)
+
+        # Initialize FlowfileCombiner
         self.flowfile_combiner = FlowfileCombiner(
             output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
         )
+
+    def load_geometry_from_wbd(self, gpkg_path: str, huc_list_path: str, index: int) -> tuple[gpd.GeoDataFrame, str]:
+        """
+        Load geometry from WBD National gpkg based on HUC code at given index.
+
+        Args:
+            gpkg_path: Path to WBD_National.gpkg
+            huc_list_path: Path to huc_list.txt
+            index: Index of HUC code to use from huc_list.txt
+
+        Returns:
+            Tuple of (GeoDataFrame with geometry converted to EPSG:4326, HUC code)
+
+        Raises:
+            ValueError: If no polygon found for HUC code
+        """
+        with open(huc_list_path, "r") as f:
+            lines = f.read().strip().split("\n")
+
+        if index >= len(lines) or index < 0:
+            raise ValueError(f"Index {index} out of range for huc_list.txt (has {len(lines)} lines)")
+
+        huc_code = lines[index].strip()
+        if not huc_code:
+            raise ValueError(f"Empty HUC code at index {index}")
+
+        # Determine HUC scale based on length
+        huc_length = len(huc_code)
+        if huc_length == 2:
+            layer_name = "WBDHU2"
+            huc_field = "HUC2"
+        elif huc_length == 4:
+            layer_name = "WBDHU4"
+            huc_field = "HUC4"
+        elif huc_length == 6:
+            layer_name = "WBDHU6"
+            huc_field = "HUC6"
+        elif huc_length == 8:
+            layer_name = "WBDHU8"
+            huc_field = "HUC8"
+        else:
+            raise ValueError(f"Invalid HUC code length {huc_length}. Expected 2, 4, 6, or 8 digits.")
+
+        # Load geodataframe from gpkg with SQL filter to avoid loading entire layer
+        sql_filter = f"SELECT * FROM {layer_name} WHERE {huc_field} = '{huc_code}'"
+        filtered_gdf = gpd.read_file(gpkg_path, sql=sql_filter)
+
+        if len(filtered_gdf) == 0:
+            raise ValueError(f"No polygon found for HUC code {huc_code} in layer {layer_name}")
+
+        if filtered_gdf.crs and filtered_gdf.crs.to_epsg() != 4326:
+            filtered_gdf = filtered_gdf.to_crs("EPSG:4326")
+
+        return filtered_gdf, huc_code
+
+    def load_polygon_gdf_from_file(self, file_path: str) -> gpd.GeoDataFrame:
+        """
+        Load polygon GeoDataFrame from a file (gpkg format).
+        
+        Args:
+            file_path: Path to the GeoDataFrame file
+            
+        Returns:
+            GeoDataFrame with polygon geometry
+            
+        Raises:
+            FileNotFoundError: If file doesn't exist
+            ValueError: If file is empty or invalid
+        """
+        if not Path(file_path).exists():
+            raise FileNotFoundError(f"Polygon data file not found: {file_path}")
+        
+        try:
+            gdf = gpd.read_file(file_path)
+            
+            if len(gdf) == 0:
+                raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
+            
+            # Ensure CRS is EPSG:4326
+            if gdf.crs and gdf.crs.to_epsg() != 4326:
+                logging.info(f"Converting polygon data from {gdf.crs} to EPSG:4326")
+                gdf = gdf.to_crs("EPSG:4326")
+            elif not gdf.crs:
+                logging.warning(f"No CRS found in {file_path}, assuming EPSG:4326")
+                gdf.set_crs("EPSG:4326", inplace=True)
+            
+            logging.info(f"Loaded polygon GeoDataFrame with {len(gdf)} features from {file_path}")
+            return gdf
+            
+        except Exception as e:
+            raise ValueError(f"Error loading GeoDataFrame from {file_path}: {e}")
 
     async def _load_parquet_file_list(self) -> List[str]:
         """Load list of parquet files from the mock data directory."""
@@ -74,69 +171,39 @@ class DataService:
             logging.error(f"Error loading parquet files from {self.mock_data_path}: {e}")
             return []
 
-    def _polygon_dict_to_geodataframe(self, polygon_data: Dict[str, Any]) -> gpd.GeoDataFrame:
-        """
-        Convert polygon data dictionary to GeoDataFrame.
-        
-        Args:
-            polygon_data: Dictionary containing polygon information with 'geometry' key
-            
-        Returns:
-            GeoDataFrame with the polygon geometry
-        """
-        # Extract geometry from polygon data
-        # Assume polygon_data has a 'geometry' key with GeoJSON-like structure
-        if 'geometry' not in polygon_data:
-            raise ValueError("Polygon data must contain a 'geometry' key")
-        
-        geometry = polygon_data['geometry']
-        
-        # Convert to shapely geometry
-        if isinstance(geometry, dict):
-            # Assume it's GeoJSON-like
-            shapely_geom = shape(geometry)
-        else:
-            raise ValueError("Geometry must be a dictionary (GeoJSON-like)")
-        
-        # Create GeoDataFrame
-        gdf = gpd.GeoDataFrame(
-            [polygon_data], 
-            geometry=[shapely_geom],
-            crs="EPSG:4326"  # Assume input is in WGS84
-        )
-        
-        return gdf
-
-    async def query_stac_for_flow_scenarios(self, polygon_data: Dict[str, Any]) -> Dict:
+    async def query_stac_for_flow_scenarios(self, polygon_gdf: gpd.GeoDataFrame) -> Dict:
         """
         Query STAC API for flow scenarios based on polygon.
-        
+
         Args:
-            polygon_data: Dictionary containing polygon information
-            
+            polygon_gdf: GeoDataFrame containing polygon geometry
+
         Returns:
             Dictionary with STAC query results and combined flowfiles
         """
-        polygon_id = polygon_data.get("polygon_id", "unknown")
-        
+        # Generate polygon_id from index or use a default
+        polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
+
         # Check if we should use mock STAC data (only if STAC is disabled)
-        if (not self.stac_querier or not self.config.stac or not self.config.stac.enabled) and \
-           self.config.mock_data_paths.mock_stac_results and \
-           Path(self.config.mock_data_paths.mock_stac_results).exists():
+        if (
+            (not self.stac_querier or not self.config.stac or not self.config.stac.enabled)
+            and self.config.mock_data_paths.mock_stac_results
+            and Path(self.config.mock_data_paths.mock_stac_results).exists()
+        ):
             logging.info(f"Using mock STAC results from {self.config.mock_data_paths.mock_stac_results}")
             try:
-                with open(self.config.mock_data_paths.mock_stac_results, 'r') as f:
+                with open(self.config.mock_data_paths.mock_stac_results, "r") as f:
                     stac_results = json.load(f)
-                
+
                 # Process flowfiles from STAC results
                 combined_flowfiles = {}
                 if self.flowfile_combiner:
                     logging.info(f"Processing flowfiles for {len(stac_results)} collections")
-                    
+
                     # Create temporary directory for this polygon's combined flowfiles
                     temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
                     Path(temp_dir).mkdir(parents=True, exist_ok=True)
-                    
+
                     loop = asyncio.get_running_loop()
                     combined_flowfiles = await loop.run_in_executor(
                         None,
@@ -144,9 +211,9 @@ class DataService:
                         stac_results,
                         temp_dir,
                     )
-                    
+
                     logging.info(f"Combined flowfiles created for polygon {polygon_id}")
-                
+
                 return {
                     "scenarios": stac_results,
                     "combined_flowfiles": combined_flowfiles,
@@ -157,17 +224,14 @@ class DataService:
             except Exception as e:
                 logging.error(f"Error loading mock STAC results: {e}")
                 # Fall through to real STAC query or disabled state
-        
+
         if not self.stac_querier or not self.config.stac or not self.config.stac.enabled:
             logging.info("STAC querying is disabled")
             return {"scenarios": {}, "stac_enabled": False}
-        
+
         logging.info(f"Querying STAC for flow scenarios for polygon: {polygon_id}")
-        
+
         try:
-            # Convert polygon data to GeoDataFrame
-            polygon_gdf = self._polygon_dict_to_geodataframe(polygon_data)
-            
             # Run STAC query in executor to avoid blocking
             loop = asyncio.get_running_loop()
             stac_results = await loop.run_in_executor(
@@ -176,47 +240,47 @@ class DataService:
                 polygon_gdf,
                 None,  # roi_geojson not needed since we have polygon_gdf
             )
-            
+
             if not stac_results:
                 logging.info(f"No STAC results found for polygon {polygon_id}")
                 return {"scenarios": {}, "stac_enabled": True}
-            
+
             # Process flowfiles from STAC results
             combined_flowfiles = {}
             if self.flowfile_combiner:
                 logging.info(f"Processing flowfiles for {len(stac_results)} collections")
-                
+
                 # Create temporary directory for this polygon's combined flowfiles
                 temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
                 Path(temp_dir).mkdir(parents=True, exist_ok=True)
-                
+
                 combined_flowfiles = await loop.run_in_executor(
                     None,
                     self.flowfile_combiner.process_stac_query_results,
                     stac_results,
                     temp_dir,
                 )
-                
+
                 logging.info(f"Combined flowfiles created for polygon {polygon_id}")
-            
+
             return {
                 "scenarios": stac_results,
                 "combined_flowfiles": combined_flowfiles,
                 "stac_enabled": True,
                 "polygon_id": polygon_id,
             }
-            
+
         except Exception as e:
             logging.error(f"Error in STAC query for polygon {polygon_id}: {e}")
             return {"scenarios": {}, "stac_enabled": True, "error": str(e)}
 
-    async def query_for_catchments(self, polygon_data: Dict[str, Any]) -> Dict:
+    async def query_for_catchments(self, polygon_gdf: gpd.GeoDataFrame) -> Dict:
         """
         Returns catchment data for the given polygon.
         Uses HandIndexQuerier for real spatial queries if enabled, otherwise uses mock data.
 
         Args:
-            polygon_data: Dictionary containing polygon information
+            polygon_gdf: GeoDataFrame containing polygon geometry
 
         Returns:
             Dictionary with catchments mapping IDs to parquet file paths
@@ -224,16 +288,13 @@ class DataService:
         # Simulate a brief delay as if we're querying a service
         await asyncio.sleep(0.01)
 
-        # Log the polygon data for informational purposes
-        polygon_id = polygon_data.get("polygon_id", "unknown")
+        # Generate polygon_id from index or use a default
+        polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
         logging.info(f"Querying catchments for polygon: {polygon_id}")
 
         if self.hand_querier and self.config.hand_index.enabled:
             # Use real hand index query
             try:
-                # Convert polygon data to GeoDataFrame
-                polygon_gdf = self._polygon_dict_to_geodataframe(polygon_data)
-                
                 # Create temporary directory for parquet outputs
                 with tempfile.TemporaryDirectory(prefix=f"catchments_{polygon_id}_") as temp_dir:
                     # Run the query with temporary output directory
@@ -244,11 +305,11 @@ class DataService:
                         polygon_gdf,
                         temp_dir,
                     )
-                    
+
                     if not catchments_result:
                         logging.info(f"No catchments found for polygon {polygon_id}")
                         return {"catchments": {}, "hand_version": "real_query"}
-                    
+
                     # Copy parquet files to a more permanent location if needed
                     # For now, we'll keep them in temp and rely on the pipeline to copy to S3
                     catchments = {}
@@ -259,24 +320,27 @@ class DataService:
                         persistent_dir = Path(f"/tmp/catchments_{polygon_id}")
                         persistent_dir.mkdir(exist_ok=True)
                         persistent_path = persistent_dir / temp_file.name
-                        
+
                         # Copy the file to persistent location
                         import shutil
+
                         shutil.copy2(temp_file, persistent_path)
-                        
+
                         catchments[catch_id] = {
                             "parquet_path": str(persistent_path),
                             "row_count": info.get("row_count", 0),
                         }
-                    
-                    logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (real query).")
+
+                    logging.info(
+                        f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (real query)."
+                    )
                     return {"catchments": catchments, "hand_version": "real_query"}
-                    
+
             except Exception as e:
                 logging.error(f"Error in hand index query for polygon {polygon_id}: {e}")
                 logging.info("Falling back to mock data")
                 # Fall through to mock data logic
-        
+
         # Use mock data (original logic)
         parquet_files = await self._load_parquet_file_list()
 
@@ -291,7 +355,7 @@ class DataService:
         return {"catchments": catchments, "hand_version": "mock_data"}
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
-        """Copies a file (e.g., parquet) to a URI (local or S3) using smart_open.
+        """Copies a file (e.g., parquet) to a URI (local or S3) using fsspec.
         Only copies if source is local and destination is S3."""
 
         # Only copy if source is local and destination is S3
@@ -317,18 +381,24 @@ class DataService:
             return source_path
 
     def _sync_copy_file(self, source_path: str, dest_uri: str):
-        """Synchronous helper for copying files using smart_open."""
-        transport_params = self._transport_params
-        with open(source_path, "rb") as src:
-            with smart_open.open(dest_uri, "wb", transport_params=transport_params) as dst:
+        """Synchronous helper for copying files using fsspec."""
+        # Create filesystem based on destination URI
+        if dest_uri.startswith('s3://'):
+            fs = fsspec.filesystem('s3', **self._s3_options)
+        else:
+            fs = fsspec.filesystem('file')
+        
+        # Copy file using fsspec
+        with open(source_path, 'rb') as src:
+            with fs.open(dest_uri, 'wb') as dst:
                 dst.write(src.read())
 
     async def check_s3_file_exists(self, s3_uri: str) -> bool:
         """Check if an S3 file exists.
-        
+
         Args:
             s3_uri: S3 URI to check (e.g., "s3://bucket/path/file.tif")
-            
+
         Returns:
             True if file exists, False otherwise
         """
@@ -346,10 +416,8 @@ class DataService:
     def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
         """Synchronous helper to check if S3 file exists."""
         try:
-            with smart_open.open(s3_uri, "rb", transport_params=self._transport_params) as f:
-                # Try to read a single byte to confirm file exists and is readable
-                f.read(1)
-            return True
+            fs = fsspec.filesystem('s3', **self._s3_options)
+            return fs.exists(s3_uri)
         except (FileNotFoundError, NoCredentialsError, ClientError) as e:
             logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")
             return False
@@ -359,25 +427,25 @@ class DataService:
 
     async def validate_s3_files(self, s3_uris: List[str]) -> List[str]:
         """Validate a list of S3 URIs and return only the ones that exist.
-        
+
         Args:
             s3_uris: List of S3 URIs to validate
-            
+
         Returns:
             List of S3 URIs that exist and are accessible
         """
         if not s3_uris:
             return []
-            
+
         logging.info(f"Validating {len(s3_uris)} S3 files...")
-        
+
         # Check all files concurrently
         tasks = [self.check_s3_file_exists(uri) for uri in s3_uris]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        
+
         valid_uris = []
         missing_uris = []
-        
+
         for uri, result in zip(s3_uris, results):
             if isinstance(result, Exception):
                 logging.error(f"Error validating S3 file {uri}: {result}")
@@ -386,12 +454,12 @@ class DataService:
                 valid_uris.append(uri)
             else:
                 missing_uris.append(uri)
-        
+
         if missing_uris:
             logging.info(f"Found {len(missing_uris)} missing S3 files:")
             for uri in missing_uris:
                 logging.info(f"  Missing: {uri}")
-        
+
         logging.info(f"Validated S3 files: {len(valid_uris)} exist, {len(missing_uris)} missing")
         return valid_uris
 

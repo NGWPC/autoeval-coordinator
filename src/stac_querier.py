@@ -1,8 +1,3 @@
-"""
-STAC Querier - A class-based interface for querying STAC APIs
-and processing flood model items into grouped extents/flowfiles.
-"""
-
 import json
 import logging
 import re
@@ -107,7 +102,9 @@ class StacQuerier:
             (re.compile(r"^(\d+yr)_(extent_raster|flow_file)$"), r"\1", r"\2"),
         ]
         self.NWS_USGS_MAGS = ["action", "minor", "moderate", "major"]
-        self.NWS_USGS_SPEC = [(re.compile(rf"^{mag}_(extent_raster|flow_file)$"), mag, r"\1") for mag in self.NWS_USGS_MAGS]
+        self.NWS_USGS_SPEC = [
+            (re.compile(rf"^{mag}_(extent_raster|flow_file)$"), mag, r"\1") for mag in self.NWS_USGS_MAGS
+        ]
         self.RIPPLE_SPEC: List[Tuple[Pattern, str, str]] = [(re.compile(r"^(\d+yr)_extent$"), r"\1", "extents")]
 
         CollectionConfig = Dict[
@@ -152,9 +149,7 @@ class StacQuerier:
                 logger.error(f"Could not open STAC API: {e}")
                 raise
 
-    def _filter_items_by_geometry(
-        self, items: List[Any], query_polygon: Polygon
-    ) -> List[Any]:
+    def _filter_items_by_geometry(self, items: List[Any], query_polygon: Polygon) -> List[Any]:
         """
         Filter STAC items using geometry relationships similar to HAND query filtering.
 
@@ -291,7 +286,9 @@ class StacQuerier:
                             ripple_best_items[key] = (item.id, flows2fim_version)
                         else:
                             # Skip this item - we already have a better version
-                            logger.info(f"Skipping {item.id} - newer version exists for {source}+{hucs[0] if hucs else ''}")
+                            logger.info(
+                                f"Skipping {item.id} - newer version exists for {source}+{hucs[0] if hucs else ''}"
+                            )
                             continue
                 except Exception as e:
                     logger.warning(f"Error processing Ripple item {item.id}: {e}")
@@ -445,7 +442,7 @@ class StacQuerier:
         # Prepare spatial filter
         intersects = None
         query_polygon = None
-        
+
         if polygon_gdf is not None and not polygon_gdf.empty:
             # Convert GeoDataFrame to GeoJSON
             geom = polygon_gdf.geometry.iloc[0]
@@ -453,10 +450,10 @@ class StacQuerier:
             if polygon_gdf.crs and polygon_gdf.crs.to_epsg() != 4326:
                 polygon_gdf_4326 = polygon_gdf.to_crs(epsg=4326)
                 geom = polygon_gdf_4326.geometry.iloc[0]
-            
+
             intersects = geom.__geo_interface__
             query_polygon = geom
-            
+
         elif roi_geojson:
             intersects = roi_geojson
             try:
@@ -497,6 +494,6 @@ class StacQuerier:
 
     def save_results(self, results: Dict, output_path: str):
         """Save query results to JSON file."""
-        with open(output_path, 'w') as f:
+        with open(output_path, "w") as f:
             json.dump(results, f, indent=2)
         logger.info(f"STAC query results saved to: {output_path}")

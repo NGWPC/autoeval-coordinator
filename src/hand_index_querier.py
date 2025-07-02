@@ -1,8 +1,3 @@
-"""
-Hand Index Querier - A class-based interface for querying HAND index data
-from partitioned parquet files using spatial queries.
-"""
-
 import logging
 import tempfile
 from pathlib import Path
@@ -39,7 +34,7 @@ class HandIndexQuerier:
         """Ensure DuckDB connection is established with required extensions."""
         if self.con is None:
             self.con = duckdb.connect(":memory:")
-            
+
             # Load required extensions
             try:
                 self.con.execute("INSTALL spatial;")
@@ -148,9 +143,7 @@ class HandIndexQuerier:
         geom_df = self.con.execute(sql_geom).fetch_df()
         if geom_df.empty:
             logger.info("No catchments intersect the query polygon.")
-            empty_gdf = gpd.GeoDataFrame(
-                columns=["catchment_id", "geometry"], geometry="geometry", crs="EPSG:5070"
-            )
+            empty_gdf = gpd.GeoDataFrame(columns=["catchment_id", "geometry"], geometry="geometry", crs="EPSG:5070")
             return empty_gdf, pd.DataFrame(), query_poly_5070
 
         # Decode WKB → shapely geometries
@@ -226,9 +219,7 @@ class HandIndexQuerier:
 
         # Apply selection criteria: contains OR within OR overlap > threshold
         selection_mask = (
-            geoms["contains_query"]
-            | geoms["within_query"]
-            | (geoms["overlap_pct"] >= self.overlap_threshold_percent)
+            geoms["contains_query"] | geoms["within_query"] | (geoms["overlap_pct"] >= self.overlap_threshold_percent)
         )
 
         keep_ids = set(geoms.loc[selection_mask, "catchment_id"])
@@ -245,9 +236,7 @@ class HandIndexQuerier:
         stats["contains_count"] = geoms["contains_query"].sum()
         stats["within_count"] = geoms["within_query"].sum()
         stats["overlap_only_count"] = (
-            (geoms["overlap_pct"] >= self.overlap_threshold_percent)
-            & ~geoms["contains_query"]
-            & ~geoms["within_query"]
+            (geoms["overlap_pct"] >= self.overlap_threshold_percent) & ~geoms["contains_query"] & ~geoms["within_query"]
         ).sum()
 
         return filtered_geoms, filtered_attrs, stats
@@ -272,9 +261,7 @@ class HandIndexQuerier:
             return {}
 
         # Filter by overlap
-        filtered_geoms, filtered_attrs, stats = self._filter_dataframes_by_overlap(
-            geoms, attrs, query_poly_5070
-        )
+        filtered_geoms, filtered_attrs, stats = self._filter_dataframes_by_overlap(geoms, attrs, query_poly_5070)
         logger.info("Overlap filter summary: %s", stats)
 
         # Prepare results

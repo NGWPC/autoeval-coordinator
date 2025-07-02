@@ -4,7 +4,6 @@ job "fim_mosaicker" {
 
   parameterized {
     meta_required = [
-      "pipeline_id",
       "raster_paths", 
       "output_path",
       "fim_type",
