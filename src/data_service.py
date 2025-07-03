@@ -5,7 +5,7 @@ import os
 import tempfile
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import fsspec
 import geopandas as gpd
@@ -21,7 +21,7 @@ from stac_querier import StacQuerier
 class DataService:
     """Service to query data sources and interact with S3 via fsspec."""
 
-    def __init__(self, config: AppConfig):
+    def __init__(self, config: AppConfig, hand_index_path: str, benchmark_collections: Optional[List[str]] = None):
         self.config = config
         self.mock_data_path = config.mock_data_paths.mock_catchment_data
         self._cached_parquet_files = None
@@ -34,11 +34,11 @@ class DataService:
         if config.s3.AWS_SESSION_TOKEN:
             self._s3_options["token"] = config.s3.AWS_SESSION_TOKEN
 
-        # Initialize HandIndexQuerier if enabled
+        # Initialize HandIndexQuerier with provided path
         self.hand_querier = None
-        if config.hand_index.enabled:
+        if hand_index_path:
             self.hand_querier = HandIndexQuerier(
-                partitioned_base_path=config.hand_index.partitioned_base_path,
+                partitioned_base_path=hand_index_path,
                 overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
             )
 
@@ -47,7 +47,7 @@ class DataService:
         if config.stac and config.stac.enabled:
             self.stac_querier = StacQuerier(
                 api_url=config.stac.api_url,
-                collections=config.stac.collections,
+                collections=benchmark_collections,
                 overlap_threshold_percent=config.stac.overlap_threshold_percent,
                 datetime_filter=config.stac.datetime_filter,
             )
@@ -236,7 +236,7 @@ class DataService:
         polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
         logging.info(f"Querying catchments for polygon: {polygon_id}")
 
-        if self.hand_querier and self.config.hand_index.enabled:
+        if self.hand_querier:
             # Use real hand index query
             try:
                 # Create temporary directory for parquet outputs
