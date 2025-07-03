@@ -21,23 +21,15 @@ AWS_ACCESS_KEY_ID = ""
 AWS_SECRET_ACCESS_KEY = ""
 AWS_SESSION_TOKEN = ""
 
-# Mock data defaults
-MOCK_CATCHMENT_DATA = "mock_data/huc-11090202-hand-catchments"
-POLYGON_DATA_FILE = "mock_data/huc-11090202.gpkg"
-MOCK_STAC_RESULTS = "mock_data/test-stac-query-results.json"
-HUC = "11090202"
-
 # HAND index defaults
 HAND_INDEX_PARTITIONED_BASE_PATH = "s3://fimc-data/autoeval/hand_output_indices/PI3_uat_and_alpha_domain_3m_wbt/"
 HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = 40.0
-HAND_INDEX_ENABLED = True
 
 # STAC defaults
 STAC_API_URL = "http://127.0.0.1:8082/"
 STAC_COLLECTIONS = ["ble-collection"]
 STAC_OVERLAP_THRESHOLD_PERCENT = 40.0
 STAC_DATETIME_FILTER = ""
-STAC_ENABLED = True
 
 # Flow scenario defaults
 FLOW_SCENARIOS_OUTPUT_DIR = "combined_flowfiles"

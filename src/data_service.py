@@ -23,8 +23,6 @@ class DataService:
 
     def __init__(self, config: AppConfig, hand_index_path: str, benchmark_collections: Optional[List[str]] = None):
         self.config = config
-        self.mock_data_path = config.mock_data_paths.mock_catchment_data
-        self._cached_parquet_files = None
         # Configure S3 filesystem options from environment
         self._s3_options = {}
         if config.s3.AWS_ACCESS_KEY_ID:
@@ -42,9 +40,9 @@ class DataService:
                 overlap_threshold_percent=config.hand_index.overlap_threshold_percent,
             )
 
-        # Initialize StacQuerier if enabled
+        # Initialize StacQuerier
         self.stac_querier = None
-        if config.stac and config.stac.enabled:
+        if config.stac:
             self.stac_querier = StacQuerier(
                 api_url=config.stac.api_url,
                 collections=benchmark_collections,
@@ -92,29 +90,6 @@ class DataService:
         except Exception as e:
             raise ValueError(f"Error loading GeoDataFrame from {file_path}: {e}")
 
-    async def _load_parquet_file_list(self) -> List[str]:
-        """Load list of parquet files from the mock data directory."""
-        if self._cached_parquet_files:
-            return self._cached_parquet_files
-
-        logging.info(f"Loading parquet files from: {self.mock_data_path}")
-        try:
-            # Get all parquet files in the directory
-            data_dir = Path(self.mock_data_path)
-            if not data_dir.exists():
-                raise FileNotFoundError(f"Directory not found: {self.mock_data_path}")
-
-            parquet_files = list(data_dir.glob("*.parquet"))
-            if not parquet_files:
-                raise ValueError(f"No parquet files found in {self.mock_data_path}")
-
-            self._cached_parquet_files = [str(f) for f in parquet_files]
-            logging.info(f"Found {len(self._cached_parquet_files)} parquet files")
-            return self._cached_parquet_files
-        except Exception as e:
-            logging.error(f"Error loading parquet files from {self.mock_data_path}: {e}")
-            return []
-
     async def query_stac_for_flow_scenarios(self, polygon_gdf: gpd.GeoDataFrame) -> Dict:
         """
         Query STAC API for flow scenarios based on polygon.
@@ -128,50 +103,8 @@ class DataService:
         # Generate polygon_id from index or use a default
         polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
 
-        # Check if we should use mock STAC data (only if STAC is disabled)
-        if (
-            (not self.stac_querier or not self.config.stac or not self.config.stac.enabled)
-            and self.config.mock_data_paths.mock_stac_results
-            and Path(self.config.mock_data_paths.mock_stac_results).exists()
-        ):
-            logging.info(f"Using mock STAC results from {self.config.mock_data_paths.mock_stac_results}")
-            try:
-                with open(self.config.mock_data_paths.mock_stac_results, "r") as f:
-                    stac_results = json.load(f)
-
-                # Process flowfiles from STAC results
-                combined_flowfiles = {}
-                if self.flowfile_combiner:
-                    logging.info(f"Processing flowfiles for {len(stac_results)} collections")
-
-                    # Create temporary directory for this polygon's combined flowfiles
-                    temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
-                    Path(temp_dir).mkdir(parents=True, exist_ok=True)
-
-                    loop = asyncio.get_running_loop()
-                    combined_flowfiles = await loop.run_in_executor(
-                        None,
-                        self.flowfile_combiner.process_stac_query_results,
-                        stac_results,
-                        temp_dir,
-                    )
-
-                    logging.info(f"Combined flowfiles created for polygon {polygon_id}")
-
-                return {
-                    "scenarios": stac_results,
-                    "combined_flowfiles": combined_flowfiles,
-                    "stac_enabled": False,  # Indicate we used mock data
-                    "polygon_id": polygon_id,
-                    "mock_data": True,
-                }
-            except Exception as e:
-                logging.error(f"Error loading mock STAC results: {e}")
-                # Fall through to real STAC query or disabled state
-
-        if not self.stac_querier or not self.config.stac or not self.config.stac.enabled:
-            logging.info("STAC querying is disabled")
-            return {"scenarios": {}, "stac_enabled": False}
+        if not self.stac_querier or not self.config.stac:
+            raise RuntimeError("STAC configuration is required but not provided")
 
         logging.info(f"Querying STAC for flow scenarios for polygon: {polygon_id}")
 
@@ -187,7 +120,7 @@ class DataService:
 
             if not stac_results:
                 logging.info(f"No STAC results found for polygon {polygon_id}")
-                return {"scenarios": {}, "stac_enabled": True}
+                return {"scenarios": {}}
 
             # Process flowfiles from STAC results
             combined_flowfiles = {}
@@ -210,18 +143,16 @@ class DataService:
             return {
                 "scenarios": stac_results,
                 "combined_flowfiles": combined_flowfiles,
-                "stac_enabled": True,
                 "polygon_id": polygon_id,
             }
 
         except Exception as e:
             logging.error(f"Error in STAC query for polygon {polygon_id}: {e}")
-            return {"scenarios": {}, "stac_enabled": True, "error": str(e)}
+            return {"scenarios": {}, "error": str(e)}
 
     async def query_for_catchments(self, polygon_gdf: gpd.GeoDataFrame) -> Dict:
         """
         Returns catchment data for the given polygon.
-        Uses HandIndexQuerier for real spatial queries if enabled, otherwise uses mock data.
 
         Args:
             polygon_gdf: GeoDataFrame containing polygon geometry
@@ -282,21 +213,10 @@ class DataService:
 
             except Exception as e:
                 logging.error(f"Error in hand index query for polygon {polygon_id}: {e}")
-                logging.info("Falling back to mock data")
-                # Fall through to mock data logic
+                raise
 
-        # Use mock data (original logic)
-        parquet_files = await self._load_parquet_file_list()
-
-        # Create catchments dict with catchment ID as key and parquet path as value
-        # Extract catchment ID from filename (UUID before .parquet)
-        catchments = {}
-        for pf in parquet_files:
-            filename = Path(pf).stem  # Get filename without extension
-            catchments[filename] = {"parquet_path": pf}
-
-        logging.info(f"Data service returning {len(catchments)} catchments for polygon {polygon_id} (mock data).")
-        return {"catchments": catchments, "hand_version": "mock_data"}
+        # No hand querier available
+        raise RuntimeError(f"Hand index querier is required but not initialized for polygon {polygon_id}")
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
         """Copies a file (e.g., parquet) to a URI (local or S3) using fsspec.
