@@ -12,7 +12,7 @@ from pydantic import (
     field_validator,
 )
 
-from . import default_config
+import default_config
 
 
 class NomadConfig(BaseModel):

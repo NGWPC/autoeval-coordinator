@@ -11,7 +11,7 @@ NOMAD_REGISTRY_TOKEN = ""
 
 # Job names
 HAND_INUNDATOR_JOB_NAME = "hand_inundator"
-FIM_MOSAICKER_JOB_NAME = "fim_mosaicker"  
+FIM_MOSAICKER_JOB_NAME = "fim_mosaicker"
 AGREEMENT_MAKER_JOB_NAME = "agreement_maker"
 
 # S3 defaults
