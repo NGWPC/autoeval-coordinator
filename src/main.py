@@ -170,8 +170,9 @@ class PolygonPipeline:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument(
-        "aoi",
+        "--aoi",
         type=str,
+        required=True,
         help="File path to a GPKG containing a single polygon. If more than one layer/feature, only the first is used.",
     )
     parser.add_argument("--outputs_path", type=str, required=True, help="Output directory path")
@@ -181,10 +182,7 @@ if __name__ == "__main__":
         default=None,
         help="Comma-separated list of STAC collections to query (e.g., 'ble-collection,nwm-collection'). Defaults to all available sources.",
     )
-    parser.add_argument("hand_index_path", type=str, help="Path to HAND index data (required)")
-    parser.add_argument(
-        "--config", default=os.path.join("config", "pipeline_config.yml"), help="Path to your YAML config"
-    )
+    parser.add_argument("--hand_index_path", type=str, required=True, help="Path to HAND index data (required)")
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -192,7 +190,7 @@ if __name__ == "__main__":
         format="%(asctime)s %(levelname)s %(message)s",
     )
 
-    cfg = load_config(args.config)
+    cfg = load_config()
 
     async def _main():
         aoi_path = Path(args.aoi)
@@ -221,6 +219,12 @@ if __name__ == "__main__":
             )
             await nomad.start()
 
+            # if no benchmark collections provided all collections queried
+            benchmark_collections = None
+            if args.benchmark_sources:
+                benchmark_collections = [col.strip() for col in args.benchmark_sources.split(",")]
+                logging.info(f"Using benchmark sources: {benchmark_collections}")
+
             data_svc = DataService(cfg, args.hand_index_path, benchmark_collections)
 
             logging.info(f"Loading polygon from: {args.aoi}")
@@ -239,12 +243,6 @@ if __name__ == "__main__":
                 raise ValueError(f"Feature must be POLYGON type, got: {geom.geom_type}")
 
             pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "pipeline_run")
-
-            # if no benchmark collections provided all collections queried
-            benchmark_collections = None
-            if args.benchmark_sources:
-                benchmark_collections = [col.strip() for col in args.benchmark_sources.split(",")]
-                logging.info(f"Using benchmark sources: {benchmark_collections}")
 
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
