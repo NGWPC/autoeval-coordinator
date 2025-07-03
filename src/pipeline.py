@@ -37,17 +37,18 @@ class PolygonPipeline:
         data_svc: DataService,
         polygon_gdf: gpd.GeoDataFrame,
         pipeline_id: str,
+        outputs_path: str,
         log_db: Optional[PipelineLogDB] = None,
     ):
         self.config = config
         self.nomad = nomad
         self.data_svc = data_svc
         self.polygon_gdf = polygon_gdf
-        self.pipeline_id = pipeline_id  # This is the HUC code
+        self.pipeline_id = pipeline_id
         self.log_db = log_db
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
 
-        self.path_factory = PathFactory(config, pipeline_id)
+        self.path_factory = PathFactory(config, pipeline_id, outputs_path)
 
         # Populated by initialize()
         self.catchments: Dict[str, Dict[str, Any]] = {}
@@ -168,7 +169,19 @@ class PolygonPipeline:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
-    parser.add_argument("--poly", type=str, help="Path to gpkg file containing a single polygon")
+    parser.add_argument(
+        "aoi",
+        type=str,
+        help="File path to a GPKG containing a single polygon. If more than one layer/feature, only the first is used.",
+    )
+    parser.add_argument("--outputs_path", type=str, required=True, help="Output directory path")
+    parser.add_argument(
+        "--benchmark_sources",
+        type=str,
+        default=None,
+        help="Comma-separated list of STAC collections to query (e.g., 'ble-collection,nwm-collection'). Defaults to all available sources.",
+    )
+    parser.add_argument("hand_index_path", type=str, help="Path to HAND index data (required)")
     parser.add_argument(
         "--config", default=os.path.join("config", "pipeline_config.yml"), help="Path to your YAML config"
     )
@@ -182,6 +195,17 @@ if __name__ == "__main__":
     cfg = load_config(args.config)
 
     async def _main():
+        aoi_path = Path(args.aoi)
+        if not aoi_path.exists():
+            raise FileNotFoundError(f"AOI file not found: {args.aoi}")
+        if not aoi_path.suffix.lower() == ".gpkg":
+            raise ValueError(f"AOI file must be a GPKG file, got: {aoi_path.suffix}")
+
+        outputs_path = Path(args.outputs_path)
+
+        outputs_path.mkdir(parents=True, exist_ok=True)
+        logging.info(f"Output directory: {outputs_path}")
+
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
@@ -197,24 +221,34 @@ if __name__ == "__main__":
             )
             await nomad.start()
 
-            data_svc = DataService(cfg)
+            data_svc = DataService(cfg, args.hand_index_path, benchmark_collections)
 
-            # Use polygon file from args or fall back to config
-            polygon_file = args.poly or cfg.mock_data_paths.polygon_data_file
-            if not polygon_file:
-                raise ValueError("No polygon file specified. Use --poly or set polygon_data_file in config")
+            logging.info(f"Loading polygon from: {args.aoi}")
+            polygon_gdf = data_svc.load_polygon_gdf_from_file(args.aoi)
 
-            logging.info(f"Loading polygon from: {polygon_file}")
-            polygon_gdf = data_svc.load_polygon_gdf_from_file(polygon_file)
+            # Validate GPKG contents
+            if len(polygon_gdf) == 0:
+                raise ValueError("GPKG file contains no features")
 
-            # Use the first feature only
             if len(polygon_gdf) > 1:
-                logging.warning(f"Found {len(polygon_gdf)} features in {polygon_file}, using only the first one")
+                logging.warning(f"Found {len(polygon_gdf)} features in {args.aoi}, using only the first one")
                 polygon_gdf = polygon_gdf.iloc[[0]]
 
-            pid = "pipeline_run"  # Placeholder pid might end up not being necessary
+            geom = polygon_gdf.geometry.iloc[0]
+            if geom.geom_type != "Polygon":
+                raise ValueError(f"Feature must be POLYGON type, got: {geom.geom_type}")
 
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pid, log_db)
+            pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "pipeline_run")
+
+            # if no benchmark collections provided all collections queried
+            benchmark_collections = None
+            if args.benchmark_sources:
+                benchmark_collections = [col.strip() for col in args.benchmark_sources.split(",")]
+                logging.info(f"Using benchmark sources: {benchmark_collections}")
+
+            logging.info(f"Using HAND index path: {args.hand_index_path}")
+
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pipeline_id, str(outputs_path), log_db)
 
             try:
                 result = await pipeline.run()
