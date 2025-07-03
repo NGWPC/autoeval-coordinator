@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from load_config import AppConfig
@@ -33,12 +34,19 @@ class PipelineResult:
 
 
 class PathFactory:
-    """Centralized S3 path generation for pipeline stages."""
+    """Centralized path generation for pipeline stages, supporting both local and S3 paths."""
 
-    def __init__(self, config: AppConfig, pipeline_id: str):
+    def __init__(self, config: AppConfig, pipeline_id: str, outputs_path: str):
         self.config = config
         self.pipeline_id = pipeline_id
-        self.base = f"s3://{config.s3.bucket}/{config.s3.base_prefix}/pipeline_{pipeline_id}"
+        
+        # Use provided outputs_path (local or S3)
+        if outputs_path.startswith("s3://"):
+            self.base = f"{outputs_path.rstrip('/')}/pipeline_{pipeline_id}"
+        else:
+            # Local path
+            self.base = str(Path(outputs_path) / f"pipeline_{pipeline_id}")
+            Path(self.base).mkdir(parents=True, exist_ok=True)
 
     def scenario_path(self, scenario_id: str, filename: str) -> str:
         return f"{self.base}/scenario_{scenario_id}/{filename}"
