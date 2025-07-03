@@ -60,33 +60,31 @@ class PolygonPipeline:
         # Clean up any stale jobs from previous runs if db_manager is available
         if self.log_db:
             await self.log_db.cleanup_pipeline_jobs(self.pipeline_id)
-        # Query STAC for flow scenarios
-        if (self.config.stac and self.config.stac.enabled) or self.config.mock_data_paths.mock_stac_results:
-            logger.debug(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
-            stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon_gdf)
-            self.flow_scenarios = stac_data.get("combined_flowfiles", {})
+        # Query STAC for flow scenarios (always required)
+        logger.debug(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
+        stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon_gdf)
+        self.flow_scenarios = stac_data.get("combined_flowfiles", {})
 
-            # Extract benchmark rasters from STAC scenarios
-            raw_scenarios = stac_data.get("scenarios", {})
-            self.benchmark_scenarios = {}
-            for collection, scenarios in raw_scenarios.items():
-                self.benchmark_scenarios[collection] = {}
-                for scenario_name, scenario_data in scenarios.items():
-                    # Find extent key (could be extent_raster, extent, etc.)
-                    extent_key = None
-                    for key in scenario_data.keys():
-                        if "extent" in key.lower():
-                            extent_key = key
-                            break
-                    self.benchmark_scenarios[collection][scenario_name] = (
-                        scenario_data.get(extent_key, []) if extent_key else []
-                    )
-
-            if self.flow_scenarios:
-                logger.debug(
-                    f"[{self.pipeline_id}] Found {len(self.flow_scenarios)} collections"
-                    + (" (from mock data)" if stac_data.get("mock_data") else "")
+        # Extract benchmark rasters from STAC scenarios
+        raw_scenarios = stac_data.get("scenarios", {})
+        self.benchmark_scenarios = {}
+        for collection, scenarios in raw_scenarios.items():
+            self.benchmark_scenarios[collection] = {}
+            for scenario_name, scenario_data in scenarios.items():
+                # Find extent key (could be extent_raster, extent, etc.)
+                extent_key = None
+                for key in scenario_data.keys():
+                    if "extent" in key.lower():
+                        extent_key = key
+                        break
+                self.benchmark_scenarios[collection][scenario_name] = (
+                    scenario_data.get(extent_key, []) if extent_key else []
                 )
+
+        if self.flow_scenarios:
+            logger.debug(
+                f"[{self.pipeline_id}] Found {len(self.flow_scenarios)} collections"
+            )
 
         if not self.flow_scenarios:
             raise RuntimeError(f"[{self.pipeline_id}] No flow scenarios found")
