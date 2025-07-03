@@ -199,10 +199,7 @@ if __name__ == "__main__":
         if not aoi_path.suffix.lower() == ".gpkg":
             raise ValueError(f"AOI file must be a GPKG file, got: {aoi_path.suffix}")
 
-        outputs_path = Path(args.outputs_path)
-
-        outputs_path.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Output directory: {outputs_path}")
+        outputs_path = args.outputs_path
 
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
@@ -246,7 +243,7 @@ if __name__ == "__main__":
 
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pipeline_id, str(outputs_path), log_db)
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pipeline_id, outputs_path, log_db)
 
             try:
                 result = await pipeline.run()
