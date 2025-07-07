@@ -37,9 +37,7 @@ job "pipeline" {
           password = "${NOMAD_META_registry_token}"
         }
 
-        command = "python3"
         args = [
-          "src/main.py",
           "--aoi", "${NOMAD_META_aoi}",
           "--outputs_path", "${NOMAD_META_outputs_path}",
           "--hand_index_path", "${NOMAD_META_hand_index_path}",
@@ -58,7 +56,7 @@ job "pipeline" {
         AWS_DEFAULT_REGION    = "us-east-1"
         
         # Nomad Configuration
-        NOMAD_ADDRESS         = "http://nomad.service.consul:4646"
+        NOMAD_ADDRESS         = "http://127.0.0.1:4646"
         NOMAD_TOKEN           = "${NOMAD_TOKEN}"
         NOMAD_NAMESPACE       = "default"
         NOMAD_REGISTRY_TOKEN  = "${NOMAD_META_registry_token}"
@@ -101,8 +99,8 @@ job "pipeline" {
       }
 
       logs {
-        max_files     = 10
-        max_file_size = 50 # MB
+        max_files     = 5
+        max_file_size = 20 # MB
       }
     }
   }
