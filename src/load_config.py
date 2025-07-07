@@ -56,24 +56,6 @@ class AwsConfig(BaseModel):
     )
 
 
-class MockDataPaths(BaseModel):
-    mock_catchment_data: str = Field(
-        default_factory=lambda: os.getenv("MOCK_CATCHMENT_DATA", default_config.MOCK_CATCHMENT_DATA)
-    )
-    polygon_data_file: str = Field(
-        default_factory=lambda: os.getenv("POLYGON_DATA_FILE", default_config.POLYGON_DATA_FILE),
-        description="Path to polygon GeoDataFrame file (gpkg format)",
-    )
-    mock_stac_results: Optional[str] = Field(
-        default_factory=lambda: os.getenv("MOCK_STAC_RESULTS", default_config.MOCK_STAC_RESULTS) or None,
-        description="Path to mock STAC query results JSON",
-    )
-    huc: Optional[str] = Field(
-        default_factory=lambda: os.getenv("HUC", default_config.HUC) or None,
-        description="HUC code for mock polygon data",
-    )
-
-
 class HandIndexConfig(BaseModel):
     partitioned_base_path: str = Field(
         default_factory=lambda: os.getenv(
@@ -88,11 +70,6 @@ class HandIndexConfig(BaseModel):
         ge=0.0,
         le=100.0,
         description="Minimum overlap percentage to keep a catchment",
-    )
-    enabled: bool = Field(
-        default_factory=lambda: os.getenv("HAND_INDEX_ENABLED", str(default_config.HAND_INDEX_ENABLED)).lower()
-        in ("true", "1", "yes", "on"),
-        description="Whether to use real hand index queries (True) or mock data (False)",
     )
 
 
@@ -111,11 +88,6 @@ class StacConfig(BaseModel):
     datetime_filter: Optional[str] = Field(
         default_factory=lambda: os.getenv("STAC_DATETIME_FILTER", default_config.STAC_DATETIME_FILTER) or None,
         description="STAC datetime or interval filter",
-    )
-    enabled: bool = Field(
-        default_factory=lambda: os.getenv("STAC_ENABLED", str(default_config.STAC_ENABLED)).lower()
-        in ("true", "1", "yes", "on"),
-        description="Whether to use STAC queries for flow scenarios",
     )
 
 
@@ -139,12 +111,9 @@ class AppConfig(BaseModel):
     nomad: NomadConfig = Field(default_factory=NomadConfig)
     jobs: JobNames = Field(default_factory=JobNames)
     aws: AwsConfig = Field(default_factory=AwsConfig)
-    mock_data_paths: MockDataPaths = Field(default_factory=MockDataPaths)
     hand_index: HandIndexConfig = Field(default_factory=HandIndexConfig)
-    stac: Optional[StacConfig] = Field(
-        default_factory=lambda: StacConfig()
-        if os.getenv("STAC_ENABLED", str(default_config.STAC_ENABLED)).lower() in ("true", "1", "yes", "on")
-        else None,
+    stac: StacConfig = Field(
+        default_factory=StacConfig,
         description="STAC API configuration",
     )
     flow_scenarios: Optional[FlowScenarioConfig] = Field(
