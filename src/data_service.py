@@ -25,12 +25,12 @@ class DataService:
         self.config = config
         # Configure S3 filesystem options from environment
         self._s3_options = {}
-        if config.s3.AWS_ACCESS_KEY_ID:
-            self._s3_options["key"] = config.s3.AWS_ACCESS_KEY_ID
-        if config.s3.AWS_SECRET_ACCESS_KEY:
-            self._s3_options["secret"] = config.s3.AWS_SECRET_ACCESS_KEY
-        if config.s3.AWS_SESSION_TOKEN:
-            self._s3_options["token"] = config.s3.AWS_SESSION_TOKEN
+        if config.aws.AWS_ACCESS_KEY_ID:
+            self._s3_options["key"] = config.aws.AWS_ACCESS_KEY_ID
+        if config.aws.AWS_SECRET_ACCESS_KEY:
+            self._s3_options["secret"] = config.aws.AWS_SECRET_ACCESS_KEY
+        if config.aws.AWS_SESSION_TOKEN:
+            self._s3_options["token"] = config.aws.AWS_SESSION_TOKEN
 
         # Initialize HandIndexQuerier with provided path
         self.hand_querier = None
