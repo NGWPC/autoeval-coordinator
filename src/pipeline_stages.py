@@ -83,9 +83,9 @@ class PipelineStage(ABC):
         return {
             "fim_type": self.config.defaults.fim_type,
             "registry_token": self.config.nomad.registry_token or "",
-            "aws_access_key": self.config.s3.AWS_ACCESS_KEY_ID or "",
-            "aws_secret_key": self.config.s3.AWS_SECRET_ACCESS_KEY or "",
-            "aws_session_token": self.config.s3.AWS_SESSION_TOKEN or "",
+            "aws_access_key": self.config.aws.AWS_ACCESS_KEY_ID or "",
+            "aws_secret_key": self.config.aws.AWS_SECRET_ACCESS_KEY or "",
+            "aws_session_token": self.config.aws.AWS_SESSION_TOKEN or "",
         }
 
 

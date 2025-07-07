@@ -78,7 +78,7 @@ class StacQuerier:
     def __init__(
         self,
         api_url: str,
-        collections: List[str],
+        collections: Optional[List[str]] = None,
         overlap_threshold_percent: float = 40.0,
         datetime_filter: Optional[str] = None,
     ):
@@ -87,7 +87,7 @@ class StacQuerier:
 
         Args:
             api_url: STAC API root URL
-            collections: List of STAC collection IDs to query
+            collections: List of STAC collection IDs to query (None means query all available)
             overlap_threshold_percent: Minimum overlap percentage to keep a STAC item
             datetime_filter: STAC datetime or interval filter
         """
@@ -463,14 +463,19 @@ class StacQuerier:
 
         # Build search kwargs
         search_kw = {
-            "collections": self.collections,
             "datetime": self.datetime_filter,
             **({"intersects": intersects} if intersects else {}),
         }
+        
+        # Only include collections if specified, otherwise query all available
+        if self.collections is not None:
+            search_kw["collections"] = self.collections
+        
         search_kw = {k: v for k, v in search_kw.items() if v is not None}
 
         try:
-            logger.info(f"Searching collections {search_kw['collections']}")
+            collections_msg = search_kw.get("collections", "all available collections")
+            logger.info(f"Searching collections {collections_msg}")
             search = self.client.search(**search_kw)
             items = list(search.items())  # Convert to list for geometry filtering
 
