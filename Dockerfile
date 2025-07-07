@@ -1,6 +1,5 @@
-FROM python:3.12-slim
+FROM python:3.12-slim AS dev
 
-# Install system-level build dependencies
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       build-essential \
@@ -9,12 +8,19 @@ RUN apt-get update && \
       wget && \
     rm -rf /var/lib/apt/lists/*
 
-# Upgrade pip & install Python requirements
-COPY requirements.txt /requirements.txt
+WORKDIR /app
 
-RUN pip install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r /requirements.txt && \
-    rm /requirements.txt
+# For development, src code should be mounted
+
+COPY requirements.txt .
+
+RUN pip install --no-cache-dir -r requirements.txt && \
+    rm requirements.txt
 
 
+FROM dev AS prod
 
+# Snapshot of the current codebase
+COPY src/ src/
+
+ENTRYPOINT ["python", "src/main.py"]
