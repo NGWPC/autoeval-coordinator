@@ -43,13 +43,7 @@ class JobNames(BaseModel):
     )
 
 
-class S3Config(BaseModel):
-    bucket: str = Field(
-        default_factory=lambda: os.getenv("S3_BUCKET", default_config.S3_BUCKET),
-        min_length=3,
-        examples=["your-fim-data-bucket"],
-    )
-    base_prefix: str = Field(default_factory=lambda: os.getenv("S3_BASE_PREFIX", default_config.S3_BASE_PREFIX))
+class AwsConfig(BaseModel):
     # AWS credentials - loaded from .env file, then env vars, then defaults
     AWS_ACCESS_KEY_ID: Optional[str] = Field(
         default_factory=lambda: os.getenv("AWS_ACCESS_KEY_ID", default_config.AWS_ACCESS_KEY_ID) or None
@@ -60,9 +54,6 @@ class S3Config(BaseModel):
     AWS_SESSION_TOKEN: Optional[str] = Field(
         default_factory=lambda: os.getenv("AWS_SESSION_TOKEN", default_config.AWS_SESSION_TOKEN) or None
     )
-    # Optional: Add additional S3 options if needed
-    # e.g., region_name, endpoint_url for specific AWS config
-    s3_options: Optional[Dict[str, Any]] = None
 
 
 class HandIndexConfig(BaseModel):
@@ -86,12 +77,6 @@ class StacConfig(BaseModel):
     api_url: str = Field(
         default_factory=lambda: os.getenv("STAC_API_URL", default_config.STAC_API_URL), description="STAC API root URL"
     )
-    collections: List[str] = Field(
-        default_factory=lambda: os.getenv("STAC_COLLECTIONS", ",".join(default_config.STAC_COLLECTIONS)).split(",")
-        if os.getenv("STAC_COLLECTIONS", ",".join(default_config.STAC_COLLECTIONS))
-        else [],
-        description="List of STAC collection IDs to query",
-    )
     overlap_threshold_percent: float = Field(
         default_factory=lambda: float(
             os.getenv("STAC_OVERLAP_THRESHOLD_PERCENT", str(default_config.STAC_OVERLAP_THRESHOLD_PERCENT))
@@ -113,17 +98,6 @@ class FlowScenarioConfig(BaseModel):
     )
 
 
-class WbdConfig(BaseModel):
-    gpkg_path: str = Field(
-        default_factory=lambda: os.getenv("WBD_GPKG_PATH", default_config.WBD_GPKG_PATH),
-        description="Path to WBD_National.gpkg file",
-    )
-    huc_list_path: str = Field(
-        default_factory=lambda: os.getenv("WBD_HUC_LIST_PATH", default_config.WBD_HUC_LIST_PATH),
-        description="Path to huc_list.txt file",
-    )
-
-
 class Defaults(BaseModel):
     fim_type: Literal["extent", "depth"] = Field(default_factory=lambda: os.getenv("FIM_TYPE", default_config.FIM_TYPE))
     http_connection_limit: int = Field(
@@ -136,7 +110,8 @@ class Defaults(BaseModel):
 class AppConfig(BaseModel):
     nomad: NomadConfig = Field(default_factory=NomadConfig)
     jobs: JobNames = Field(default_factory=JobNames)
-    s3: S3Config = Field(default_factory=S3Config)
+    aws: AwsConfig = Field(default_factory=AwsConfig)
+    mock_data_paths: MockDataPaths = Field(default_factory=MockDataPaths)
     hand_index: HandIndexConfig = Field(default_factory=HandIndexConfig)
     stac: StacConfig = Field(
         default_factory=StacConfig,
@@ -145,10 +120,6 @@ class AppConfig(BaseModel):
     flow_scenarios: Optional[FlowScenarioConfig] = Field(
         default_factory=lambda: FlowScenarioConfig() if os.getenv("FLOW_SCENARIOS_OUTPUT_DIR") else None,
         description="Flow scenario processing configuration",
-    )
-    wbd: Optional[WbdConfig] = Field(
-        default_factory=lambda: WbdConfig() if os.getenv("WBD_GPKG_PATH") or os.getenv("WBD_HUC_LIST_PATH") else None,
-        description="WBD National data configuration",
     )
     defaults: Defaults = Field(default_factory=Defaults)
 
