@@ -46,7 +46,12 @@ class PolygonPipeline:
         self.polygon_gdf = polygon_gdf
         self.pipeline_id = pipeline_id
         self.log_db = log_db
-        self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_id}-")
+        # Ensure the temp directory exists and handle pipeline_id with path separators
+        temp_dir = "/tmp"
+        os.makedirs(temp_dir, exist_ok=True)
+        # Extract just the filename part of pipeline_id to use as prefix
+        pipeline_prefix = os.path.basename(pipeline_id)
+        self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_prefix}-", dir=temp_dir)
 
         self.path_factory = PathFactory(config, pipeline_id, outputs_path)
 
@@ -82,9 +87,7 @@ class PolygonPipeline:
                 )
 
         if self.flow_scenarios:
-            logger.debug(
-                f"[{self.pipeline_id}] Found {len(self.flow_scenarios)} collections"
-            )
+            logger.debug(f"[{self.pipeline_id}] Found {len(self.flow_scenarios)} collections")
 
         if not self.flow_scenarios:
             raise RuntimeError(f"[{self.pipeline_id}] No flow scenarios found")
@@ -235,7 +238,7 @@ if __name__ == "__main__":
             if geom.geom_type != "Polygon":
                 raise ValueError(f"Feature must be POLYGON type, got: {geom.geom_type}")
 
-            pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "pipeline_run")
+            pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "test_pipeline_run")
 
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
