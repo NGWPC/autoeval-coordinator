@@ -191,11 +191,9 @@ if __name__ == "__main__":
     cfg = load_config()
 
     async def _main():
-        aoi_path = Path(args.aoi)
-        if not aoi_path.exists():
-            raise FileNotFoundError(f"AOI file not found: {args.aoi}")
-        if not aoi_path.suffix.lower() == ".gpkg":
-            raise ValueError(f"AOI file must be a GPKG file, got: {aoi_path.suffix}")
+        # Validate AOI file extension
+        if not args.aoi.lower().endswith(".gpkg"):
+            raise ValueError(f"AOI file must be a GPKG file, got: {args.aoi}")
 
         outputs_path = args.outputs_path
 
