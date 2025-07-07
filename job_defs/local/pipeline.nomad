@@ -31,7 +31,8 @@ job "pipeline" {
       config {
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-coordinator-v0.1" 
         force_pull = true
-
+        network_mode = "host"
+        
         auth {
           username = "ReadOnly_NGWPC_Group_Deploy_Token"
           password = "${NOMAD_META_registry_token}"
@@ -66,7 +67,7 @@ job "pipeline" {
         S3_BASE_PREFIX        = "${NOMAD_META_output_path}"
         
         # Pipeline Configuration
-        FIM_TYPE              = "${NOMAD_META_fim_type}"
+        FIM_TYPE              = "extent"
         HTTP_CONNECTION_LIMIT = "100"
         
         # HAND Index Configuration
@@ -74,8 +75,7 @@ job "pipeline" {
         HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = "40.0"
         
         # STAC Configuration
-        STAC_API_URL          = "http://stac-api.service.consul:8082/"
-        STAC_COLLECTIONS      = "${NOMAD_META_stac_collections}"
+        STAC_API_URL          = "http://127.0.0.1:8082/"
         STAC_OVERLAP_THRESHOLD_PERCENT = "40.0"
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         
@@ -85,11 +85,7 @@ job "pipeline" {
         AGREEMENT_MAKER_JOB_NAME = "agreement_maker"
         
         FLOW_SCENARIOS_OUTPUT_DIR = "combined_flowfiles"
-        
-        # WBD Configuration
-        WBD_GPKG_PATH         = "/inputs/WBD_National.gpkg"
-        WBD_HUC_LIST_PATH     = "/inputs/huc_list.txt"
-        
+   
         LOG_LEVEL             = "INFO"
         PYTHONUNBUFFERED      = "1"
       }
