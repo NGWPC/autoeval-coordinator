@@ -111,7 +111,6 @@ class AppConfig(BaseModel):
     nomad: NomadConfig = Field(default_factory=NomadConfig)
     jobs: JobNames = Field(default_factory=JobNames)
     aws: AwsConfig = Field(default_factory=AwsConfig)
-    mock_data_paths: MockDataPaths = Field(default_factory=MockDataPaths)
     hand_index: HandIndexConfig = Field(default_factory=HandIndexConfig)
     stac: StacConfig = Field(
         default_factory=StacConfig,
