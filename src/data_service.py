@@ -67,23 +67,14 @@ class DataService:
             FileNotFoundError: If file doesn't exist
             ValueError: If file is empty or invalid
         """
-        # Check if file exists (local or S3)
-        if file_path.startswith("s3://"):
-            # For S3 files, check existence using fsspec
-            fs = fsspec.filesystem("s3", **self._s3_options)
-            if not fs.exists(file_path):
-                raise FileNotFoundError(f"Polygon data file not found: {file_path}")
-        else:
-            # For local files, use Path.exists()
-            if not Path(file_path).exists():
-                raise FileNotFoundError(f"Polygon data file not found: {file_path}")
+        # fsspec should handle both local and S3 paths
+        fs = fsspec.filesystem("auto", **self._s3_options)
+        if not fs.exists(file_path):
+            raise FileNotFoundError(f"Polygon data file not found: {file_path}")
 
         try:
-            # geopandas can read from S3 directly with fsspec
-            if file_path.startswith("s3://"):
-                gdf = gpd.read_file(file_path, storage_options=self._s3_options)
-            else:
-                gdf = gpd.read_file(file_path)
+            # geopandas can read from both local and S3 paths with storage_options
+            gdf = gpd.read_file(file_path, storage_options=self._s3_options)
 
             if len(gdf) == 0:
                 raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
