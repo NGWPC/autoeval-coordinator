@@ -58,7 +58,7 @@ class DataService:
     def load_polygon_gdf_from_file(self, file_path: str) -> gpd.GeoDataFrame:
         """
         Args:
-            file_path: Path to the GeoDataFrame file
+            file_path: Path to the GeoDataFrame file (local or S3)
 
         Returns:
             GeoDataFrame with polygon geometry
@@ -67,11 +67,14 @@ class DataService:
             FileNotFoundError: If file doesn't exist
             ValueError: If file is empty or invalid
         """
-        if not Path(file_path).exists():
+        # fsspec should handle both local and S3 paths
+        fs = fsspec.filesystem("auto", **self._s3_options)
+        if not fs.exists(file_path):
             raise FileNotFoundError(f"Polygon data file not found: {file_path}")
 
         try:
-            gdf = gpd.read_file(file_path)
+            # geopandas can read from both local and S3 paths with storage_options
+            gdf = gpd.read_file(file_path, storage_options=self._s3_options)
 
             if len(gdf) == 0:
                 raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
