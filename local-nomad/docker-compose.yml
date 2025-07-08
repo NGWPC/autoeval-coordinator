@@ -1,0 +1,38 @@
+services:
+  nomad-server:
+    build: .
+    container_name: nomad-server
+    network_mode: host
+    privileged: true
+    volumes:
+      # Docker socket access required for Nomad to manage Docker containers as a task driver
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./nomad-server.hcl:/etc/nomad/nomad.hcl
+      - ./register-jobs.sh:/usr/local/bin/register-jobs.sh
+      - ../job_defs/local:/nomad/jobs
+      # cgroup filesystem access required for Nomad client to manage process isolation and resource limits
+      - /sys/fs/cgroup:/sys/fs/cgroup:rw
+      - /tmp:/tmp
+    environment:
+      - NOMAD_ADDR=http://localhost:4646
+    command: ["nomad", "agent", "-config", "/etc/nomad/nomad.hcl"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4646/v1/status/leader"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+
+  job-registrar:
+    build: .
+    container_name: nomad-job-registrar
+    network_mode: host
+    volumes:
+      - ./register-jobs.sh:/usr/local/bin/register-jobs.sh
+      - ../job_defs/local:/nomad/jobs
+    environment:
+      - NOMAD_ADDR=http://localhost:4646
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["/usr/local/bin/register-jobs.sh"]
+    depends_on:
+      nomad-server:
+        condition: service_healthy
