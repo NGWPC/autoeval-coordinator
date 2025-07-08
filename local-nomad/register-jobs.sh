@@ -1,11 +1,5 @@
 #!/bin/bash
 
-echo "Waiting for Nomad server to be ready..."
-until curl -s http://localhost:4646/v1/status/leader > /dev/null 2>&1; do
-    echo "Nomad server not ready, waiting..."
-    sleep 5
-done
-
 echo "Nomad server is ready, registering jobs..."
 
 # Register all jobs in the job_defs/local directory

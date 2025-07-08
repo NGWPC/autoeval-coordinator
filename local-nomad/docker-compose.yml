@@ -16,6 +16,11 @@ services:
     environment:
       - NOMAD_ADDR=http://localhost:4646
     command: ["nomad", "agent", "-config", "/etc/nomad/nomad.hcl"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4646/v1/status/leader"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
 
   job-registrar:
     build: .
@@ -27,6 +32,7 @@ services:
     environment:
       - NOMAD_ADDR=http://localhost:4646
     entrypoint: ["/bin/sh", "-c"]
-    command: ["sleep 10 && /usr/local/bin/register-jobs.sh"]
+    command: ["/usr/local/bin/register-jobs.sh"]
     depends_on:
-      - nomad-server
+      nomad-server:
+        condition: service_healthy
