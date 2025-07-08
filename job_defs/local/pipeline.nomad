@@ -58,7 +58,7 @@ job "pipeline" {
         
         # Nomad Configuration
         NOMAD_ADDRESS         = "http://127.0.0.1:4646"
-        NOMAD_TOKEN           = "${NOMAD_TOKEN}"
+        NOMAD_TOKEN           = "${NOMAD_TOKEN}" # this will be changed to a meta variable when the test version of the job is created
         NOMAD_NAMESPACE       = "default"
         NOMAD_REGISTRY_TOKEN  = "${NOMAD_META_registry_token}"
         
