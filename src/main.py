@@ -37,6 +37,7 @@ class PolygonPipeline:
         data_svc: DataService,
         polygon_gdf: gpd.GeoDataFrame,
         pipeline_id: str,
+        tags: Dict[str, str],
         outputs_path: str,
         log_db: Optional[PipelineLogDB] = None,
     ):
@@ -45,13 +46,13 @@ class PolygonPipeline:
         self.data_svc = data_svc
         self.polygon_gdf = polygon_gdf
         self.pipeline_id = pipeline_id
+        self.tags = tags
         self.log_db = log_db
         # Ensure the temp directory exists and handle pipeline_id with path separators
         temp_dir = "/tmp"
         os.makedirs(temp_dir, exist_ok=True)
-        # Extract just the filename part of pipeline_id to use as prefix
-        pipeline_prefix = os.path.basename(pipeline_id)
-        self.tmp = tempfile.TemporaryDirectory(prefix=f"{pipeline_prefix}-", dir=temp_dir)
+        self.tags_str = self.create_tags_str()
+        self.tmp = tempfile.TemporaryDirectory(prefix=f"{os.path.basename(self.pipeline_id)}-", dir=temp_dir)
 
         self.path_factory = PathFactory(config, pipeline_id, outputs_path)
 
@@ -59,6 +60,21 @@ class PolygonPipeline:
         self.catchments: Dict[str, Dict[str, Any]] = {}
         self.flow_scenarios: Dict[str, Dict[str, str]] = {}
         self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
+
+    def create_tags_str(self) -> str:
+        """
+        Format tags as a string: key1=val1,key2=val2,...
+        If 'batch_name' and 'aoi_name' are present, they appear first and second respectively.
+        This is done to allow prefix searching in nomad job list.
+        """
+        ordered_keys = []
+        if "batch_name" in self.tags:
+            ordered_keys.append("batch_name")
+        if "aoi_name" in self.tags:
+            ordered_keys.append("aoi_name")
+        ordered_keys += [k for k in self.tags if k not in ("batch_name", "aoi_name")]
+        tag_str = ",".join(f"{k}={self.tags[k]}" for k in ordered_keys)
+        return f"{tag_str}"
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
@@ -128,7 +144,13 @@ class PolygonPipeline:
 
         try:
             inundation_stage = InundationStage(
-                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.catchments
+                self.config,
+                self.nomad,
+                self.data_svc,
+                self.path_factory,
+                self.pipeline_id,
+                self.tags_str,
+                self.catchments,
             )
             mosaic_stage = MosaicStage(self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id)
             agreement_stage = AgreementStage(
@@ -168,6 +190,16 @@ class PolygonPipeline:
         logger.debug(f"[{self.pipeline_id}] cleaned up temp files")
 
 
+def parsed_tags(tag_list):
+    tags = {}
+    for tag in tag_list:
+        if "=" not in tag:
+            raise argparse.ArgumentTypeError(f"Invalid tag format: '{tag}'. Expected key=value.")
+        key, value = tag.split("=", 1)
+        tags[key] = value
+    return tags
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument(
@@ -184,7 +216,19 @@ if __name__ == "__main__":
         help="Comma-separated list of STAC collections to query (e.g., 'ble-collection,nwm-collection'). Defaults to all available sources.",
     )
     parser.add_argument("--hand_index_path", type=str, required=True, help="Path to HAND index data (required)")
+
+    parser.add_argument(
+        "--tags",
+        nargs="+",
+        type=str,
+        default={},
+        help="List of key=value pairs for tagging (e.g., --tags batch=my_batch aoi=texas) These tags are included in job_ids that the pipeline will dispatch.",
+    )
+
     args = parser.parse_args()
+
+    if args.tags:
+        args.tags = parsed_tags(args.tags)
 
     logging.basicConfig(
         level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -238,11 +282,9 @@ if __name__ == "__main__":
             if geom.geom_type != "Polygon":
                 raise ValueError(f"Feature must be POLYGON type, got: {geom.geom_type}")
 
-            pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "test_pipeline_run")
-
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pipeline_id, outputs_path, log_db)
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, args.tags, outputs_path, log_db)
 
             try:
                 result = await pipeline.run()

@@ -56,12 +56,21 @@ class AgreementDispatchMeta(DispatchMetaBase):
 
 
 class PipelineStage(ABC):
-    def __init__(self, config: AppConfig, nomad_service, data_service, path_factory: PathFactory, pipeline_id: str):
+    def __init__(
+        self,
+        config: AppConfig,
+        nomad_service,
+        data_service,
+        path_factory: PathFactory,
+        pipeline_id: str,
+        tags_str: str = "",
+    ):
         self.config = config
         self.nomad = nomad_service
         self.data_svc = data_service
         self.path_factory = path_factory
         self.pipeline_id = pipeline_id
+        self.tags_str = tags_str
 
     @abstractmethod
     async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -99,6 +108,7 @@ class InundationStage(PipelineStage):
         data_service,
         path_factory: PathFactory,
         pipeline_id: str,
+        tags_str: str,
         catchments: Dict[str, Dict[str, Any]],
     ):
         super().__init__(config, nomad_service, data_service, path_factory, pipeline_id)
@@ -175,10 +185,13 @@ class InundationStage(PipelineStage):
         )
 
         meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
+        prefix = f"[{self.tags_str},scenario={result.scenario_id},catchment={str(catch_id)}]"
+        if len(prefix) > 256:
+            prefix = (prefix[:255] + "]",)  # Ensure prefix does not exceed Nomad's limit
 
         job_id, _ = await self.nomad.dispatch_and_track(
             self.config.jobs.hand_inundator,
-            prefix=f"inund-{result.scenario_id}-catch-{str(catch_id)}---",
+            prefix=prefix,
             meta=meta.model_dump(),
             pipeline_id=self.pipeline_id,
         )
