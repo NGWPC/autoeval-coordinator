@@ -139,12 +139,12 @@ class InundationStage(PipelineStage):
             else:
                 logger.error(f"[{result.scenario_id}] Catchment {catch_id} inundation failed: {task_result}")
 
-        # Validate S3 files and update results
+        # Validate files and update results
         updated_results = []
         for result in valid_results:
             outputs = scenario_outputs.get(result.scenario_id, [])
             if outputs:
-                valid_outputs = await self.data_svc.validate_s3_files(outputs)
+                valid_outputs = await self.data_svc.validate_files(outputs)
                 if valid_outputs:
                     result.set_path("inundation", "valid_outputs", valid_outputs)
                     result.status = "inundation_complete"

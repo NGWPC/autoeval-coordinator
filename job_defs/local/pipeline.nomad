@@ -29,14 +29,18 @@ job "pipeline" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-coordinator-v0.1" 
-        force_pull = true
+        # Use local development image - must use specific tag (not 'latest')
+        # to prevent Nomad from trying to pull from a registry
+        image = "autoeval-coordinator:local" 
+        force_pull = false
         network_mode = "host"
         
-        auth {
-          username = "ReadOnly_NGWPC_Group_Deploy_Token"
-          password = "${NOMAD_META_registry_token}"
-        }
+        # Mount local test data and output directory
+        volumes = [
+          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "/tmp/autoeval-outputs:/outputs:rw",
+          "/tmp:/tmp:rw"
+        ]
 
         args = [
           "--aoi", "${NOMAD_META_aoi}",
@@ -61,21 +65,16 @@ job "pipeline" {
         NOMAD_TOKEN           = "${NOMAD_TOKEN}" # this will be changed to a meta variable when the test version of the job is created
         NOMAD_NAMESPACE       = "default"
         NOMAD_REGISTRY_TOKEN  = "${NOMAD_META_registry_token}"
-        
-        # S3 Configuration
-        S3_BUCKET             = "fimc-data"
-        S3_BASE_PREFIX        = "${NOMAD_META_output_path}"
-        
+ 
         # Pipeline Configuration
         FIM_TYPE              = "extent"
         HTTP_CONNECTION_LIMIT = "100"
         
         # HAND Index Configuration
-        HAND_INDEX_PARTITIONED_BASE_PATH = "s3://fimc-data/autoeval/hand_output_indices/PI3_uat_and_alpha_domain_3m_wbt/"
         HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = "40.0"
         
         # STAC Configuration
-        STAC_API_URL          = "http://127.0.0.1:8082/"
+        STAC_API_URL          = "http://127.0.0.1:8888/"
         STAC_OVERLAP_THRESHOLD_PERCENT = "40.0"
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         

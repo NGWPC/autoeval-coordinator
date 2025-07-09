@@ -28,13 +28,18 @@ job "hand_inundator" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
-        force_pull = true
-
-        auth {
-          username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
-          password = "${NOMAD_META_registry_token}"
-        }
+        # Use local development image - must use specific tag (not 'latest')
+        # to prevent Nomad from trying to pull from a registry
+        image = "autoeval-jobs:local" 
+        force_pull = false
+        
+        # Mount local test data and output directory
+        volumes = [
+          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "/tmp/autoeval-outputs:/outputs:rw",
+          "/tmp:/tmp:rw"
+        ]
+        
         command = "python3"
         args = [
           "/deploy/hand_inundator/inundate.py",
