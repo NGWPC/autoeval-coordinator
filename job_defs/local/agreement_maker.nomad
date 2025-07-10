@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "agreement_maker" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -38,7 +43,7 @@ job "agreement_maker" {
         
         # Mount local test data and output directory
         volumes = [
-          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "${var.repo_root}/test:/test:ro",
           "/tmp/autoeval-outputs:/outputs:rw"
         ]
         
@@ -91,7 +96,8 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 12000 # Higher memory for large raster processing
+        # set small here for github runner test (8gb total memory)
+        memory = 4000 
       }
 
       logs {

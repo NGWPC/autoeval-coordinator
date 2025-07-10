@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "pipeline" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -37,7 +42,7 @@ job "pipeline" {
         
         # Mount local test data and output directory
         volumes = [
-          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "${var.repo_root}/test:/test:ro",
           "/tmp/autoeval-outputs:/outputs:rw",
           "/tmp:/tmp:rw"
         ]
@@ -90,7 +95,7 @@ job "pipeline" {
       }
 
       resources {
-        memory = 8192 
+        memory = 6000 
       }
 
       logs {

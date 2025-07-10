@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "hand_inundator" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -35,7 +40,7 @@ job "hand_inundator" {
         
         # Mount local test data and output directory
         volumes = [
-          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "${var.repo_root}/test:/test:ro",
           "/tmp/autoeval-outputs:/outputs:rw",
           "/tmp:/tmp:rw"
         ]
@@ -85,8 +90,8 @@ job "hand_inundator" {
       }
 
       resources {
-        cpu    = 1000 # Adjust CPU MHz (example: 1 core = 1000)
-        memory = 4096 # Adjust Memory MiB (example: 4 GiB)
+        # set small here for github runner test (8gb total memory)
+        memory = 4000
       }
 
       logs {

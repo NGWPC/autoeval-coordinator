@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "fim_mosaicker" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -34,7 +39,7 @@ job "fim_mosaicker" {
         
         # Mount local test data and output directory
         volumes = [
-          "/home/dylan.lee/autoeval-coordinator/test:/test:ro",
+          "${var.repo_root}/test:/test:ro",
           "/tmp/autoeval-outputs:/outputs:rw"
         ]
 
@@ -79,7 +84,8 @@ job "fim_mosaicker" {
 
       resources {
         cpu    = 1000 
-        memory = 4096 
+        # set small here for github runner test (8gb total memory)
+        memory = 4000 
       }
 
       logs {
