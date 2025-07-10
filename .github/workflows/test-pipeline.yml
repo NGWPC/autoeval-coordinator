@@ -1,0 +1,184 @@
+name: Test Pipeline
+
+on:
+  push:
+    branches: [ main, develop, local-test-data ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test-pipeline:
+    runs-on: self-hosted
+    timeout-minutes: 60
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Clean up previous runs
+      run: |
+        # Stop any running containers from previous runs
+        docker-compose down -v --remove-orphans 2>/dev/null || true
+        cd local-nomad && docker-compose down -v --remove-orphans 2>/dev/null || true
+        cd ..
+        
+        sudo rm -rf /tmp/outputs/test-run || true
+        
+    - name: Build container images
+      run: |
+        docker build -t autoeval-coordinator:local .
+        docker build -t autoeval-jobs:local -f $HOME/autoeval-jobs/Dockerfile $HOME/autoeval-jobs/
+        docker build -t autoeval-jobs-gval:local -f $HOME/autoeval-jobs/Dockerfile.gval $HOME/autoeval-jobs/
+        
+    - name: Start infrastructure services
+      run: |
+        # Start main services (STAC, PostgreSQL, asset server)
+        docker-compose up -d
+        
+        # Start Nomad
+        cd local-nomad
+        docker-compose up -d
+        cd ..
+        
+    - name: Wait for services to be ready
+      run: |
+        echo "Waiting for Nomad to be ready..."
+        for i in {1..30}; do
+          if curl -f http://localhost:4646/v1/status/leader 2>/dev/null; then
+            echo "Nomad is ready"
+            break
+          fi
+          echo "Waiting for Nomad... ($i/30)"
+          sleep 5
+        done
+        
+        if ! curl -f http://localhost:4646/v1/status/leader 2>/dev/null; then
+          echo "Nomad failed to start"
+          exit 1
+        fi
+        
+        echo "Waiting for STAC API to be ready..."
+        for i in {1..30}; do
+          if curl -f http://localhost:8888/ 2>/dev/null; then
+            echo "STAC API is ready"
+            break
+          fi
+          echo "Waiting for STAC API... ($i/30)"
+          sleep 5
+        done
+        
+        if ! curl -f http://localhost:8888/ 2>/dev/null; then
+          echo "STAC API failed to start"
+          exit 1
+        fi
+        
+    - name: Register Nomad jobs
+      run: |
+        cd local-nomad
+        chmod +x register-jobs.sh
+        ./register-jobs.sh
+        cd ..
+        
+    - name: Create test output directory
+      run: |
+        sudo mkdir -p /tmp/outputs/test-run
+        sudo chmod 777 /tmp/outputs/test-run
+        
+    - name: Run pipeline test
+      run: |
+        # Dispatch the pipeline job
+        echo "Dispatching pipeline job..."
+        JOB_OUTPUT=$(docker exec nomad-server nomad job dispatch \
+          -meta="aoi=/test/test-data-query-polygon.gpkg" \
+          -meta="outputs_path=/outputs/test-run" \
+          -meta="hand_index_path=/test/hand-data/parquet-index/" \
+          -meta="benchmark_sources=usgs-fim-collection" \
+          pipeline)
+        
+        echo "Job dispatch output: $JOB_OUTPUT"
+        
+        # Extract job ID from output
+        JOB_ID=$(echo "$JOB_OUTPUT" | grep -oP '(?<=Job ")[^"]+' || echo "$JOB_OUTPUT" | grep -oP 'Job ID: \K[a-f0-9-]+')
+        
+        if [ -z "$JOB_ID" ]; then
+          echo "Failed to extract job ID from: $JOB_OUTPUT"
+          exit 1
+        fi
+        
+        echo "Pipeline job dispatched with ID: $JOB_ID"
+        
+        # Monitor job status
+        for i in {1..180}; do
+          STATUS=$(docker exec nomad-server nomad job status -json "$JOB_ID" 2>/dev/null | jq -r '.Status // "unknown"')
+          echo "Job status: $STATUS (check $i/180)"
+          
+          if [ "$STATUS" = "complete" ]; then
+            echo "Pipeline completed successfully!"
+            break
+          elif [ "$STATUS" = "failed" ] || [ "$STATUS" = "dead" ]; then
+            echo "Pipeline failed with status: $STATUS"
+            echo "=== Job Status Details ==="
+            docker exec nomad-server nomad job status "$JOB_ID"
+            echo "=== Recent Nomad Logs ==="
+            docker exec nomad-server nomad logs -stderr "$JOB_ID" 2>/dev/null || echo "No stderr logs available"
+            docker exec nomad-server nomad logs -stdout "$JOB_ID" 2>/dev/null || echo "No stdout logs available"
+            exit 1
+          fi
+          
+          sleep 10
+        done
+        
+        if [ "$STATUS" != "complete" ]; then
+          echo "Pipeline timed out after 30 minutes with status: $STATUS"
+          docker exec nomad-server nomad job status "$JOB_ID"
+          exit 1
+        fi
+        
+    - name: Validate pipeline outputs
+      run: |
+        echo "Checking pipeline outputs..."
+        ls -la /tmp/outputs/test-run/ || echo "Output directory not found"
+        
+        # Check for expected output files (adjust based on your pipeline)
+        if [ -f /tmp/outputs/test-run/mosaic.tif ]; then
+          echo "Mosaic output found"
+        else
+          echo "Mosaic output missing"
+          exit 1
+        fi
+        
+        # Add other validation checks as needed
+        echo "Pipeline validation completed successfully"
+        
+    - name: Collect logs on failure
+      if: failure()
+      run: |
+        echo "=== Docker Containers ==="
+        docker ps -a
+        
+        echo "=== Nomad Server Status ==="
+        docker exec nomad-server nomad server members 2>/dev/null || echo "Cannot get server status"
+        
+        echo "=== Active Jobs ==="
+        docker exec nomad-server nomad job status 2>/dev/null || echo "Cannot get job status"
+        
+        echo "=== Recent Nomad Server Logs ==="
+        docker logs nomad-server --tail 50 2>/dev/null || echo "Cannot get Nomad logs"
+        
+        echo "=== Recent Coordinator Logs ==="
+        docker logs autoeval-coordinator --tail 50 2>/dev/null || echo "Cannot get coordinator logs"
+        
+        echo "=== Infrastructure Service Logs ==="
+        docker-compose logs --tail 20 2>/dev/null || echo "Cannot get compose logs"
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        echo "Cleaning up..."
+        cd local-nomad
+        docker-compose down -v --remove-orphans 2>/dev/null || true
+        cd ..
+        docker-compose down -v --remove-orphans 2>/dev/null || true
+        
+        # Clean up test outputs
+        sudo rm -rf /tmp/outputs/test-run || true
