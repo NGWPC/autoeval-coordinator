@@ -1,10 +1,10 @@
 name: Test Pipeline
 
 on:
-  push:
-    branches: [ main, develop, local-test-data ]
-  # pull_request:
-  #   branches: [ main ]
+  # push:
+    # branches: [ main, develop, local-test-data ]
+  pull_request:
+    branches: [ main ]
 
 jobs:
   test-pipeline:
@@ -41,8 +41,8 @@ jobs:
         
     - name: Start infrastructure services
       run: |
-        # Start main services (STAC, PostgreSQL, asset server)
-        docker compose up -d
+        # Start main services (STAC, PostgreSQL, asset server) - exclude autoeval-dev
+        docker compose up -d test-stac-fastapi-pgstac test-pgstac test-asset-server
         
         # Start Nomad
         cd local-nomad
@@ -74,7 +74,7 @@ jobs:
         echo "Waiting for STAC API to be ready..."
         for i in {1..5}; do
           if curl -f http://localhost:8888/_mgmt/ping 2>/dev/null | grep -q "PONG"; then
-            echo "STAC API is ready (ping successful)"
+            echo "STAC API is ready"
             break
           fi
           echo "Waiting for STAC API... ($i/5)"
@@ -83,18 +83,7 @@ jobs:
         
         if ! curl -f http://localhost:8888/_mgmt/ping 2>/dev/null | grep -q "PONG"; then
           echo "STAC API failed to start"
-          echo "Checking STAC API status..."
-          curl -v http://localhost:8888/_mgmt/ping || true
-          
-          echo "=== Docker container status ==="
-          docker ps -a
-          
-          echo "=== STAC container logs ==="
-          docker compose logs test-stac-fastapi-pgstac --tail 50 || echo "Could not get STAC logs"
-          
-          echo "=== PostgreSQL container logs ==="
-          docker compose logs test-pgstac --tail 50 || echo "Could not get DB logs"
-          
+          docker compose logs test-stac-fastapi-pgstac --tail 20 || echo "Could not get STAC logs"
           exit 1
         fi
         
@@ -102,53 +91,20 @@ jobs:
       run: |
         echo "Loading test data into STAC API..."
         
-        # Load the collection first
         echo "Loading collection..."
         curl -X POST http://localhost:8888/collections \
           -H "Content-Type: application/json" \
           -d @test/bench-data/collection.json \
           -f -v || echo "Failed to load collection"
         
-        # Load the item
         echo "Loading STAC item..."
         curl -X POST http://localhost:8888/collections/usgs-fim-collection/items \
           -H "Content-Type: application/json" \
           -d @test/bench-data/01080203-shvm3-usgs.json \
           -f -v || echo "Failed to load item"
         
-        # Verify data was loaded
         echo "Verifying data load..."
-        curl -f http://localhost:8888/collections || echo "Failed to retrieve collections"
-        
-    - name: Register Nomad jobs
-      run: |
-        # The job registrar runs automatically via docker-compose
-        # Just verify the jobs are registered
-        echo "Waiting for jobs to be registered..."
-        sleep 10
-        
-        echo "Checking registered jobs..."
-        docker exec nomad-server nomad job status
-        
-        echo "=== Debugging volume mounts ==="
-        echo "Current working directory: $(pwd)"
-        echo "Test directory contents:"
-        ls -la test/
-        echo "Job registrar logs:"
-        docker logs nomad-job-registrar --tail 20 || echo "No job registrar logs"
-        
-        echo "=== Debugging: Check what was mounted in job-registrar ==="
-        echo "Current directory in local-nomad: $(cd local-nomad && pwd)"
-        echo "Testing if PWD/.. resolves correctly:"
-        cd local-nomad && echo "PWD: $(pwd)" && echo "PWD/..: $(pwd)/.." && cd ..
-        
-        echo "=== Inspect the registered pipeline job ==="
-        docker exec nomad-server nomad job inspect pipeline > pipeline-job.json
-        echo "Checking volume configuration in pipeline job:"
-        cat pipeline-job.json | jq -r '.Job.TaskGroups[0].Tasks[0].Config.volumes[]' 2>/dev/null || echo "Could not extract volumes"
-        
-        echo "First few lines of the job definition:"
-        cat pipeline-job.json | jq -r '.Job' | head -20
+        curl -f http://localhost:8888/collections >/dev/null || echo "Failed to retrieve collections"
         
     - name: Create test output directory
       run: |
@@ -278,19 +234,6 @@ jobs:
         echo "=== Recent Nomad Server Logs ==="
         docker logs nomad-server --tail 50 2>/dev/null || echo "Cannot get Nomad logs"
         
-        echo "=== Recent Coordinator Logs ==="
-        docker logs autoeval-coordinator --tail 50 2>/dev/null || echo "Cannot get coordinator logs"
-        
         echo "=== Infrastructure Service Logs ==="
         docker compose logs --tail 20 2>/dev/null || echo "Cannot get compose logs"
         
-    - name: Cleanup
-      if: always()
-      run: |
-        echo "Cleaning up..."
-        cd local-nomad
-        docker compose down -v --remove-orphans 2>/dev/null || true
-        cd ..
-        docker compose down -v --remove-orphans 2>/dev/null || true
-        
-        sudo rm -rf /tmp/autoeval-outputs/test-run || true
