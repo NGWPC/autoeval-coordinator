@@ -67,14 +67,10 @@ class DataService:
             FileNotFoundError: If file doesn't exist
             ValueError: If file is empty or invalid
         """
-        # fsspec should handle both local and S3 paths
-        fs = fsspec.filesystem("auto", **self._s3_options)
-        if not fs.exists(file_path):
-            raise FileNotFoundError(f"Polygon data file not found: {file_path}")
-
         try:
-            # geopandas can read from both local and S3 paths with storage_options
-            gdf = gpd.read_file(file_path, storage_options=self._s3_options)
+            # geopandas can read from both local and S3 paths
+            # For S3 paths, it will use storage_options; for local paths, it ignores them
+            gdf = gpd.read_file(file_path, storage_options=self._s3_options if file_path.startswith("s3://") else None)
 
             if len(gdf) == 0:
                 raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
@@ -90,6 +86,8 @@ class DataService:
             logging.info(f"Loaded polygon GeoDataFrame with {len(gdf)} features from {file_path}")
             return gdf
 
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Polygon data file not found: {file_path}")
         except Exception as e:
             raise ValueError(f"Error loading GeoDataFrame from {file_path}: {e}")
 
@@ -260,11 +258,11 @@ class DataService:
             with fs.open(dest_uri, "wb") as dst:
                 dst.write(src.read())
 
-    async def check_s3_file_exists(self, s3_uri: str) -> bool:
-        """Check if an S3 file exists.
+    async def check_file_exists(self, uri: str) -> bool:
+        """Check if a file exists (S3 or local).
 
         Args:
-            s3_uri: S3 URI to check (e.g., "s3://bucket/path/file.tif")
+            uri: S3 URI or local path to check
 
         Returns:
             True if file exists, False otherwise
@@ -273,49 +271,53 @@ class DataService:
             loop = asyncio.get_running_loop()
             return await loop.run_in_executor(
                 None,
-                self._sync_check_s3_file_exists,
-                s3_uri,
+                self._sync_check_file_exists,
+                uri,
             )
         except Exception as e:
-            logging.warning(f"Error checking S3 file {s3_uri}: {e}")
+            logging.warning(f"Error checking file {uri}: {e}")
             return False
 
-    def _sync_check_s3_file_exists(self, s3_uri: str) -> bool:
-        """Synchronous helper to check if S3 file exists."""
+    def _sync_check_file_exists(self, uri: str) -> bool:
+        """Synchronous helper to check if file exists (S3 or local)."""
         try:
-            fs = fsspec.filesystem("s3", **self._s3_options)
-            return fs.exists(s3_uri)
+            if uri.startswith("s3://"):
+                fs = fsspec.filesystem("s3", **self._s3_options)
+                return fs.exists(uri)
+            else:
+                # Local file
+                return Path(uri).exists()
         except (FileNotFoundError, NoCredentialsError, ClientError) as e:
-            logging.debug(f"S3 file {s3_uri} does not exist or is not accessible: {e}")
+            logging.debug(f"File {uri} does not exist or is not accessible: {e}")
             return False
         except Exception as e:
-            logging.warning(f"Unexpected error checking S3 file {s3_uri}: {e}")
+            logging.warning(f"Unexpected error checking file {uri}: {e}")
             return False
 
-    async def validate_s3_files(self, s3_uris: List[str]) -> List[str]:
-        """Validate a list of S3 URIs and return only the ones that exist.
+    async def validate_files(self, uris: List[str]) -> List[str]:
+        """Validate a list of S3 URIs or local file paths and return only the ones that exist.
 
         Args:
-            s3_uris: List of S3 URIs to validate
+            uris: List of S3 URIs or local file paths to validate
 
         Returns:
-            List of S3 URIs that exist and are accessible
+            List of URIs/paths that exist and are accessible
         """
-        if not s3_uris:
+        if not uris:
             return []
 
-        logging.info(f"Validating {len(s3_uris)} S3 files...")
+        logging.info(f"Validating {len(uris)} files...")
 
         # Check all files concurrently
-        tasks = [self.check_s3_file_exists(uri) for uri in s3_uris]
+        tasks = [self.check_file_exists(uri) for uri in uris]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         valid_uris = []
         missing_uris = []
 
-        for uri, result in zip(s3_uris, results):
+        for uri, result in zip(uris, results):
             if isinstance(result, Exception):
-                logging.error(f"Error validating S3 file {uri}: {result}")
+                logging.error(f"Error validating file {uri}: {result}")
                 missing_uris.append(uri)
             elif result:
                 valid_uris.append(uri)
@@ -323,11 +325,11 @@ class DataService:
                 missing_uris.append(uri)
 
         if missing_uris:
-            logging.info(f"Found {len(missing_uris)} missing S3 files:")
+            logging.info(f"Found {len(missing_uris)} missing files:")
             for uri in missing_uris:
                 logging.info(f"  Missing: {uri}")
 
-        logging.info(f"Validated S3 files: {len(valid_uris)} exist, {len(missing_uris)} missing")
+        logging.info(f"Validated files: {len(valid_uris)} exist, {len(missing_uris)} missing")
         return valid_uris
 
     def cleanup(self):

@@ -1,0 +1,100 @@
+{
+  "type": "Collection",
+  "id": "usgs-fim-collection",
+  "stac_version": "1.0.0",
+  "description": "This is a collection of base level elevation maps meant to be used to benchmark the performance of the National Water Centers Height Above Nearest Drainage (HAND) Maps",
+  "links": [
+    {
+      "rel": "root",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "FIM Benchmark Catalog"
+    },
+    {
+      "rel": "item",
+      "href": "./01080203-shvm3-usgs/01080203-shvm3-usgs.json",
+      "type": "application/json"
+    },
+    {
+      "rel": "parent",
+      "href": "../catalog.json",
+      "type": "application/json",
+      "title": "FIM Benchmark Catalog"
+    }
+  ],
+  "stac_extensions": [
+    "https://stac-extensions.github.io/item-assets/v1.0.0/schema.json"
+  ],
+  "item_assets": {
+    "thumbnail": {
+      "title": "Extent thumbnail",
+      "description": "A quicklook showing one of the modeled flood extents for the region",
+      "type": "image/png",
+      "roles": [
+        "thumbnail"
+      ]
+    },
+    "extent_raster": {
+      "title": "Extent Raster",
+      "description": "Raster of flood extent",
+      "type": "image/tiff; application=geotiff",
+      "roles": [
+        "data"
+      ]
+    },
+    "depth_raster": {
+      "title": "Depth Raster",
+      "description": "Raster of flood depth",
+      "type": "image/tiff; application=geotiff",
+      "roles": [
+        "data"
+      ]
+    },
+    "flow_file": {
+      "title": "Flow File",
+      "description": "CSV of flow file data for a given modeled flood magnitude",
+      "type": "text/csv",
+      "roles": [
+        "data"
+      ]
+    },
+    "rating_curve": {
+      "title": "Rating Curve",
+      "description": "CSV of the rating curve used to compute modeled flows",
+      "type": "application/csv",
+      "roles": [
+        "data"
+      ]
+    }
+  },
+  "title": "usgs-fim-benchmark-flood-rasters",
+  "extent": {
+    "spatial": {
+      "bbox": [
+        [
+          -179.15,
+          18.91,
+          -66.95,
+          71.39
+        ]
+      ]
+    },
+    "temporal": {
+      "interval": [
+        [
+          null,
+          null
+        ]
+      ]
+    }
+  },
+  "license": "CC0-1.0",
+  "keywords": [
+    "flood",
+    "usgs-fim",
+    "model",
+    "extents",
+    "depths",
+    "HEC-RAS"
+  ]
+}

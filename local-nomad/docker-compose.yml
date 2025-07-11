@@ -29,8 +29,10 @@ services:
     volumes:
       - ./register-jobs.sh:/usr/local/bin/register-jobs.sh
       - ../job_defs/local:/nomad/jobs
+      - ${PWD}/..:/repo:ro
     environment:
       - NOMAD_ADDR=http://localhost:4646
+      - REPO_ROOT=${PWD}/..
     entrypoint: ["/bin/sh", "-c"]
     command: ["/usr/local/bin/register-jobs.sh"]
     depends_on:
