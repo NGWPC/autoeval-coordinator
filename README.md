@@ -9,7 +9,8 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 2. Run `mkdir -p ./.data/nomad/data`
 3. Run `docker compose -f docker-compose-local.yml up`
 4. Register Jobs (see ./local-nomad/README.md)
-5. Dispatch a pipeline job through Nomad UI or API
+5. Create required container images from autoeval-jobs repo
+6. Dispatch a pipeline job through Nomad UI or API
 
 ### Arguments
 - **HAND Version** 
