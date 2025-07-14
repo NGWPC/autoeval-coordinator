@@ -16,6 +16,7 @@ job "pipeline" {
       "aws_secret_key", 
       "aws_session_token",
       "stac_datetime_filter", 
+      "tags",            # Space-separated list of key=value pairs
     ]
   }
 
@@ -43,6 +44,7 @@ job "pipeline" {
           "--outputs_path", "${NOMAD_META_outputs_path}",
           "--hand_index_path", "${NOMAD_META_hand_index_path}",
           "--benchmark_sources", "${NOMAD_META_benchmark_sources}",
+          "--tags", "${NOMAD_META_tags}",
         ]
       }
 

@@ -56,12 +56,15 @@ class AgreementDispatchMeta(DispatchMetaBase):
 
 
 class PipelineStage(ABC):
-    def __init__(self, config: AppConfig, nomad_service, data_service, path_factory: PathFactory, pipeline_id: str):
+    def __init__(
+        self, config: AppConfig, nomad_service, data_service, path_factory: PathFactory, pipeline_id: str, tags_str: str
+    ):
         self.config = config
         self.nomad = nomad_service
         self.data_svc = data_service
         self.path_factory = path_factory
         self.pipeline_id = pipeline_id
+        self.tags_str = tags_str
 
     @abstractmethod
     async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -99,9 +102,10 @@ class InundationStage(PipelineStage):
         data_service,
         path_factory: PathFactory,
         pipeline_id: str,
+        tags_str: str,
         catchments: Dict[str, Dict[str, Any]],
     ):
-        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id)
+        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id, tags_str)
         self.catchments = catchments
 
     def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -144,7 +148,7 @@ class InundationStage(PipelineStage):
         for result in valid_results:
             outputs = scenario_outputs.get(result.scenario_id, [])
             if outputs:
-                valid_outputs = await self.data_svc.validate_s3_files(outputs)
+                valid_outputs = await self.data_svc.validate_files(outputs)
                 if valid_outputs:
                     result.set_path("inundation", "valid_outputs", valid_outputs)
                     result.status = "inundation_complete"
@@ -178,7 +182,7 @@ class InundationStage(PipelineStage):
 
         job_id, _ = await self.nomad.dispatch_and_track(
             self.config.jobs.hand_inundator,
-            prefix=f"inund-{result.scenario_id}-catch-{str(catch_id)}---",
+            prefix=f"{self.tags_str}",
             meta=meta.model_dump(),
             pipeline_id=self.pipeline_id,
         )
@@ -227,7 +231,7 @@ class MosaicStage(PipelineStage):
             hand_task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    prefix=f"hand-mosaic-{result.scenario_id}",
+                    prefix=f"{self.tags_str}",
                     meta=hand_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -241,7 +245,7 @@ class MosaicStage(PipelineStage):
             benchmark_task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    prefix=f"bench-mosaic-{result.scenario_id}",
+                    prefix=f"{self.tags_str}",
                     meta=benchmark_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -317,7 +321,7 @@ class AgreementStage(PipelineStage):
             task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.agreement_maker,
-                    prefix=f"agree-{result.scenario_id}",
+                    prefix=f"{self.tags_str}",
                     meta=meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
