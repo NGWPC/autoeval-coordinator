@@ -61,7 +61,6 @@ class PolygonPipeline:
         self.flow_scenarios: Dict[str, Dict[str, str]] = {}
         self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
 
-
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
         # Clean up any stale jobs from previous runs if db_manager is available
@@ -216,13 +215,10 @@ def parsed_tags(tag_list):
                 f"Required tag '{required_key}' is missing. Required tags: {', '.join(sorted(required_tag_keys))}"
             )
 
-    non_internal_tags = {k: v for k, v in tags.items() if k not in internal_tag_keys}
-    if non_internal_tags:
-        non_internal_str = ",".join(f"{k}={v}" for k, v in non_internal_tags.items())
-        if len(non_internal_str) > 120:
-            raise argparse.ArgumentTypeError(
-                f"Non-internal tags exceed 120 character limit ({len(non_internal_str)} chars): {non_internal_str}"
-            )
+    if tags:
+        tags_str = ",".join(f"{k}={v}" for k, v in tags.items())
+        if len(tags_str) > 120:
+            raise argparse.ArgumentTypeError(f"Tags exceed 120 character limit ({len(tags_str)} chars): {tags_str}")
 
     return tags
 
