@@ -1,0 +1,15 @@
+services:
+  autoeval-dev:
+    build:
+      context: .
+      target: dev
+    image: autoeval-dev:latest
+    volumes:
+      - ./src:/app/src
+      - ./data:/data # for input/output data
+    environment:
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_SESSION_TOKEN
+    entrypoint: [ sleep, infinity ]
+    network_mode: host

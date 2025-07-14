@@ -4,6 +4,13 @@ The coordinator is the entry point to the evaluation pipeline. It takes a gpkg c
 
 The current evaluation pipeline is primarily designed to generate HAND FIM extents or depths and then evaluate these against relevant benchmark sources.
 
+### Getting Started Locally
+1. Create `.env` file
+2. Run `mkdir -p ./.data/nomad/data`
+3. Run `docker compose -f docker-compose-local.yml up`
+4. Register Jobs (see ./local-nomad/README.md)
+5. Dispatch a pipeline job through Nomad UI or API
+
 ### Arguments
 - **HAND Version** 
   - The HAND version argument allows the user to specify a specific version of HAND to generate extents for. This argument is required.
