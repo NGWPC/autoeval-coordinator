@@ -51,7 +51,7 @@ class PolygonPipeline:
         # Ensure the temp directory exists and handle pipeline_id with path separators
         temp_dir = "/tmp"
         os.makedirs(temp_dir, exist_ok=True)
-        self.tags_str = self.create_tags_str()
+        # Store tags dict directly - pipeline stages will create tag strings as needed
         self.tmp = tempfile.TemporaryDirectory(prefix=f"{os.path.basename(self.pipeline_id)}-", dir=temp_dir)
 
         self.path_factory = PathFactory(config, pipeline_id, outputs_path)
@@ -61,20 +61,6 @@ class PolygonPipeline:
         self.flow_scenarios: Dict[str, Dict[str, str]] = {}
         self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
 
-    def create_tags_str(self) -> str:
-        """
-        Format tags as a string: [key1=val1,key2=val2,...]
-        If 'batch_name' and 'aoi_name' are present, they appear first and second respectively.
-        This is done to allow prefix searching in nomad job list.
-        """
-        ordered_keys = []
-        if "batch_name" in self.tags:
-            ordered_keys.append("batch_name")
-        if "aoi_name" in self.tags:
-            ordered_keys.append("aoi_name")
-        ordered_keys += [k for k in self.tags if k not in ("batch_name", "aoi_name")]
-        tag_str = ",".join(f"{k}={self.tags[k]}" for k in ordered_keys)
-        return f"[{tag_str}]"
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
@@ -149,14 +135,14 @@ class PolygonPipeline:
                 self.data_svc,
                 self.path_factory,
                 self.pipeline_id,
-                self.tags_str,
+                self.tags,
                 self.catchments,
             )
             mosaic_stage = MosaicStage(
-                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags_str
+                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags
             )
             agreement_stage = AgreementStage(
-                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags_str
+                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags
             )
 
             results = await inundation_stage.run(results)
@@ -194,21 +180,48 @@ class PolygonPipeline:
 
 def parsed_tags(tag_list):
     tags = {}
-    core_tag_keys = {"batch_name", "aoi_name", "bench_src", "scenario"}
+    internal_tag_keys = {"bench_src", "cand_src", "scenario", "catchment"}
+    required_tag_keys = {"batch_name", "aoi_name"}
+
+    forbidden_chars = {" ", "/", "&", ","}
 
     for tag in tag_list:
         if "=" not in tag:
             raise argparse.ArgumentTypeError(f"Invalid tag format: '{tag}'. Expected key=value.")
         key, value = tag.split("=", 1)
+
+        for char in forbidden_chars:
+            if char in key:
+                raise argparse.ArgumentTypeError(
+                    f"Tag key '{key}' contains forbidden character '{char}'. Forbidden characters: {', '.join(sorted(forbidden_chars))}"
+                )
+
+        for char in forbidden_chars:
+            if char in value:
+                raise argparse.ArgumentTypeError(
+                    f"Tag value '{value}' contains forbidden character '{char}'. Forbidden characters: {', '.join(sorted(forbidden_chars))}"
+                )
+
         tags[key] = value
 
-    # Check length of non-core tags
-    non_core_tags = {k: v for k, v in tags.items() if k not in core_tag_keys}
-    if non_core_tags:
-        non_core_str = ",".join(f"{k}={v}" for k, v in non_core_tags.items())
-        if len(non_core_str) > 70:
+    for internal_key in internal_tag_keys:
+        if internal_key in tags:
             raise argparse.ArgumentTypeError(
-                f"Non-core tags exceed 70 character limit ({len(non_core_str)} chars): {non_core_str}"
+                f"Tag '{internal_key}' is reserved for internal use and cannot be provided by users."
+            )
+
+    for required_key in required_tag_keys:
+        if required_key not in tags:
+            raise argparse.ArgumentTypeError(
+                f"Required tag '{required_key}' is missing. Required tags: {', '.join(sorted(required_tag_keys))}"
+            )
+
+    non_internal_tags = {k: v for k, v in tags.items() if k not in internal_tag_keys}
+    if non_internal_tags:
+        non_internal_str = ",".join(f"{k}={v}" for k, v in non_internal_tags.items())
+        if len(non_internal_str) > 120:
+            raise argparse.ArgumentTypeError(
+                f"Non-internal tags exceed 120 character limit ({len(non_internal_str)} chars): {non_internal_str}"
             )
 
     return tags

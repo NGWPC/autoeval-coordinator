@@ -57,14 +57,20 @@ class AgreementDispatchMeta(DispatchMetaBase):
 
 class PipelineStage(ABC):
     def __init__(
-        self, config: AppConfig, nomad_service, data_service, path_factory: PathFactory, pipeline_id: str, tags_str: str
+        self,
+        config: AppConfig,
+        nomad_service,
+        data_service,
+        path_factory: PathFactory,
+        pipeline_id: str,
+        tags: Dict[str, str],
     ):
         self.config = config
         self.nomad = nomad_service
         self.data_svc = data_service
         self.path_factory = path_factory
         self.pipeline_id = pipeline_id
-        self.tags_str = tags_str
+        self.tags = tags
 
     @abstractmethod
     async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -91,6 +97,33 @@ class PipelineStage(ABC):
             "aws_session_token": self.config.aws.AWS_SESSION_TOKEN or "",
         }
 
+    def _create_tags_str(self, internal_tags: Dict[str, str]) -> str:
+        """
+        Create a tags string with internal tags added.
+        Format: [key1=val1,key2=val2,...]
+        """
+        all_tags = {**self.tags, **internal_tags}
+
+        # Order tags: batch_name, aoi_name first, then internal tags, then others
+        ordered_keys = []
+        if "batch_name" in all_tags:
+            ordered_keys.append("batch_name")
+        if "aoi_name" in all_tags:
+            ordered_keys.append("aoi_name")
+
+        # Add internal tags in a consistent order
+        internal_order = ["bench_src", "cand_src", "scenario", "catchment"]
+        for key in internal_order:
+            if key in all_tags and key not in ordered_keys:
+                ordered_keys.append(key)
+
+        for key in sorted(all_tags.keys()):
+            if key not in ordered_keys:
+                ordered_keys.append(key)
+
+        tag_str = ",".join(f"{k}={all_tags[k]}" for k in ordered_keys)
+        return f"[{tag_str}]"
+
 
 class InundationStage(PipelineStage):
     """Stage that runs inundation jobs for all catchments in all scenarios."""
@@ -102,10 +135,10 @@ class InundationStage(PipelineStage):
         data_service,
         path_factory: PathFactory,
         pipeline_id: str,
-        tags_str: str,
+        tags: Dict[str, str],
         catchments: Dict[str, Dict[str, Any]],
     ):
-        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id, tags_str)
+        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id, tags)
         self.catchments = catchments
 
     def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -180,9 +213,13 @@ class InundationStage(PipelineStage):
 
         meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
 
+        # add catchment internal tag
+        internal_tags = {"catchment": str(catch_id)[:7]}
+        tags_str = self._create_tags_str(internal_tags)
+
         job_id, _ = await self.nomad.dispatch_and_track(
             self.config.jobs.hand_inundator,
-            prefix=f"{self.tags_str}",
+            prefix=tags_str,
             meta=meta.model_dump(),
             pipeline_id=self.pipeline_id,
         )
@@ -228,10 +265,15 @@ class MosaicStage(PipelineStage):
             hand_output_path = self.path_factory.hand_mosaic_path(result.scenario_id)
             result.set_path("mosaic", "hand", hand_output_path)
             hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
+
+            # add cand_src and scenario internal tags for HAND mosaic
+            hand_internal_tags = {"cand_src": "hand", "scenario": result.scenario_name}
+            hand_tags_str = self._create_tags_str(hand_internal_tags)
+
             hand_task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    prefix=f"{self.tags_str}",
+                    prefix=hand_tags_str,
                     meta=hand_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -242,10 +284,15 @@ class MosaicStage(PipelineStage):
             benchmark_output_path = self.path_factory.benchmark_mosaic_path(result.scenario_id)
             result.set_path("mosaic", "benchmark", benchmark_output_path)
             benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
+
+            # add bench_src and scenario internal tags for benchmark mosaic
+            benchmark_internal_tags = {"bench_src": result.collection_name, "scenario": result.scenario_name}
+            benchmark_tags_str = self._create_tags_str(benchmark_internal_tags)
+
             benchmark_task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.fim_mosaicker,
-                    prefix=f"{self.tags_str}",
+                    prefix=benchmark_tags_str,
                     meta=benchmark_meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
@@ -318,10 +365,14 @@ class AgreementStage(PipelineStage):
                 hand_mosaic, benchmark_mosaic, agreement_output_path, metrics_output_path
             )
 
+            # Create tags string with bench_src and scenario internal tags for agreement
+            agreement_internal_tags = {"bench_src": result.collection_name, "scenario": result.scenario_name}
+            agreement_tags_str = self._create_tags_str(agreement_internal_tags)
+
             task = asyncio.create_task(
                 self.nomad.dispatch_and_track(
                     self.config.jobs.agreement_maker,
-                    prefix=f"{self.tags_str}",
+                    prefix=agreement_tags_str,
                     meta=meta.model_dump(),
                     pipeline_id=self.pipeline_id,
                 )
