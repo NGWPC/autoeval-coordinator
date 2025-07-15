@@ -12,6 +12,9 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 5. Create required container images from autoeval-jobs repo
 6. Dispatch a pipeline job through Nomad UI or API
 
+**Tips for working with .env files:**
+- The example.env is a good place to look to make a .env file that is configured for local deployment. This .env file can be stored as .env.local when not in use and copied to .env when local deployment is desired. Depending on which deployment configuration is desired different .env files can be saved locally within the repo without being tracked by git. For example, you could also have a .env.test environment file for deploying to the AWS Test account. 
+
 ### Arguments
 - **HAND Version** 
   - The HAND version argument allows the user to specify a specific version of HAND to generate extents for. This argument is required.
