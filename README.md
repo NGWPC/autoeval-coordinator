@@ -9,8 +9,12 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 2. Run `mkdir -p ./.data/nomad/data`
 3. Run `docker compose -f docker-compose-local.yml up`
 4. Register Jobs (see ./local-nomad/README.md)
-5. Create required container images from autoeval-jobs repo
-6. Dispatch a pipeline job through Nomad UI or API
+5. Load the test stac data by running `./testdata/benchmark/load-test-stac-data.sh`
+6. Create required container images from autoeval-jobs repo
+7. Dispatch a pipeline job through Nomad UI or API
+
+**Tips for working with .env files:**
+- The example.env is a good place to look to make a .env file that is configured for local deployment. This .env file can be stored as .env.local when not in use and copied to .env when local deployment is desired. Depending on which deployment configuration is desired different .env files can be saved locally within the repo without being tracked by git. For example, you could also have a .env.test environment file for deploying to the AWS Test account. 
 
 ### Arguments
 - **HAND Version** 
