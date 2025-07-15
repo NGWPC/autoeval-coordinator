@@ -8,8 +8,11 @@ mock_data/
 simple-eval-pipeline/
 autoeval-jobs/
 .env
+.env.*
+!example.env
 inputs/
 pipeline_log.db
 .vscode/
 viztracer-visualization.json
 pipeline_trace.json
+.data
