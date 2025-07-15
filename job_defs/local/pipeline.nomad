@@ -42,7 +42,7 @@ job "pipeline" {
         
         # Mount local test data and output directory
         volumes = [
-          "${var.repo_root}/test:/test:ro",
+          "${var.repo_root}/testdata:/testdata:ro",
           "/tmp/autoeval-outputs:/outputs:rw",
           "/tmp:/tmp:rw"
         ]
