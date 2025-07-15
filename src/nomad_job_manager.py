@@ -58,7 +58,6 @@ class JobTracker:
     """Tracks the state of a single Nomad job."""
 
     job_id: str
-    pipeline_id: str
     dispatch_time: float = field(default_factory=time.time)
     status: JobStatus = JobStatus.DISPATCHED
     allocation_id: Optional[str] = None
@@ -135,7 +134,6 @@ class NomadJobManager:
         job_name: str,
         prefix: str,
         meta: Optional[Dict[str, str]] = None,
-        pipeline_id: Optional[str] = None,
     ) -> Tuple[str, int]:
         """
         Dispatch a job and track it to completion.
@@ -147,7 +145,6 @@ class NomadJobManager:
 
         tracker = JobTracker(
             job_id=job_id,
-            pipeline_id=pipeline_id or "unknown",
             task_name=job_name,
             stage=meta.get("stage") if meta else None,
         )
@@ -329,7 +326,6 @@ class NomadJobManager:
 
             await self.log_db.update_job_status(
                 job_id=tracker.job_id,
-                pipeline_id=tracker.pipeline_id,
                 status=status_str,
                 stage=tracker.stage or "unknown",
             )

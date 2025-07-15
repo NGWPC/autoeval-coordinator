@@ -36,7 +36,6 @@ class PolygonPipeline:
         nomad: NomadJobManager,
         data_svc: DataService,
         polygon_gdf: gpd.GeoDataFrame,
-        pipeline_id: str,
         tags: Dict[str, str],
         outputs_path: str,
         log_db: Optional[PipelineLogDB] = None,
@@ -45,16 +44,15 @@ class PolygonPipeline:
         self.nomad = nomad
         self.data_svc = data_svc
         self.polygon_gdf = polygon_gdf
-        self.pipeline_id = pipeline_id
         self.tags = tags
         self.log_db = log_db
-        # Ensure the temp directory exists and handle pipeline_id with path separators
+        # Ensure the temp directory exists
         temp_dir = "/tmp"
         os.makedirs(temp_dir, exist_ok=True)
         # Store tags dict directly - pipeline stages will create tag strings as needed
-        self.tmp = tempfile.TemporaryDirectory(prefix=f"{os.path.basename(self.pipeline_id)}-", dir=temp_dir)
+        self.tmp = tempfile.TemporaryDirectory(prefix="pipeline-", dir=temp_dir)
 
-        self.path_factory = PathFactory(config, pipeline_id, outputs_path)
+        self.path_factory = PathFactory(config, outputs_path)
 
         # Populated by initialize()
         self.catchments: Dict[str, Dict[str, Any]] = {}
@@ -63,11 +61,8 @@ class PolygonPipeline:
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
-        # Clean up any stale jobs from previous runs if db_manager is available
-        if self.log_db:
-            await self.log_db.cleanup_pipeline_jobs(self.pipeline_id)
         # Query STAC for flow scenarios (always required)
-        logger.debug(f"[{self.pipeline_id}] Querying STAC for flow scenarios")
+        logger.debug("Querying STAC for flow scenarios")
         stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon_gdf)
         self.flow_scenarios = stac_data.get("combined_flowfiles", {})
 
@@ -88,22 +83,22 @@ class PolygonPipeline:
                 )
 
         if self.flow_scenarios:
-            logger.debug(f"[{self.pipeline_id}] Found {len(self.flow_scenarios)} collections")
+            logger.debug(f"Found {len(self.flow_scenarios)} collections")
 
         if not self.flow_scenarios:
-            raise RuntimeError(f"[{self.pipeline_id}] No flow scenarios found")
+            raise RuntimeError("No flow scenarios found")
 
         # Query hand index for catchments
-        logger.debug(f"[{self.pipeline_id}] Querying hand index for catchments")
+        logger.debug("Querying hand index for catchments")
         data = await self.data_svc.query_for_catchments(self.polygon_gdf)
         self.catchments = data.get("catchments", {})
 
         if not self.catchments:
-            raise RuntimeError(f"[{self.pipeline_id}] No catchments found")
+            raise RuntimeError("No catchments found")
 
         total_scenarios = sum(len(scenarios) for scenarios in self.flow_scenarios.values())
         logger.info(
-            f"[{self.pipeline_id}] Initialization complete: {len(self.catchments)} catchments, "
+            f"Initialization complete: {len(self.catchments)} catchments, "
             f"{total_scenarios} flow scenarios"
         )
 
@@ -117,7 +112,7 @@ class PolygonPipeline:
             for scenario, flowfile_path in flows.items():
                 benchmark_rasters = self.benchmark_scenarios.get(collection, {}).get(scenario, [])
                 result = PipelineResult(
-                    scenario_id=f"{self.pipeline_id}-{collection}-{scenario}",
+                    scenario_id=f"{collection}-{scenario}",
                     collection_name=collection,
                     scenario_name=scenario,
                     flowfile_path=flowfile_path,
@@ -125,7 +120,7 @@ class PolygonPipeline:
                 )
                 results.append(result)
 
-        logger.debug(f"[{self.pipeline_id}] Processing {len(results)} scenarios with stage-based parallelism")
+        logger.debug(f"Processing {len(results)} scenarios with stage-based parallelism")
 
         try:
             inundation_stage = InundationStage(
@@ -133,15 +128,14 @@ class PolygonPipeline:
                 self.nomad,
                 self.data_svc,
                 self.path_factory,
-                self.pipeline_id,
                 self.tags,
                 self.catchments,
             )
             mosaic_stage = MosaicStage(
-                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags
+                self.config, self.nomad, self.data_svc, self.path_factory, self.tags
             )
             agreement_stage = AgreementStage(
-                self.config, self.nomad, self.data_svc, self.path_factory, self.pipeline_id, self.tags
+                self.config, self.nomad, self.data_svc, self.path_factory, self.tags
             )
 
             results = await inundation_stage.run(results)
@@ -153,28 +147,26 @@ class PolygonPipeline:
 
             result = {
                 "status": "success",
-                "pipeline_id": self.pipeline_id,
                 "catchment_count": len(self.catchments),
                 "total_scenarios_attempted": total_attempted,
                 "successful_scenarios": len(successful_results),
                 "message": f"Pipeline completed successfully with {len(successful_results)}/{total_attempted} scenarios",
             }
             logger.info(
-                f"[{self.pipeline_id}] Pipeline SUCCESS: {len(successful_results)}/{total_attempted} scenarios completed"
+                f"Pipeline SUCCESS: {len(successful_results)}/{total_attempted} scenarios completed"
             )
             return result
         except Exception as e:
-            logger.error(f"[{self.pipeline_id}] Pipeline FAILED: {str(e)}")
+            logger.error(f"Pipeline FAILED: {str(e)}")
             return {
                 "status": "failed",
-                "pipeline_id": self.pipeline_id,
                 "error": str(e),
                 "message": f"Pipeline failed: {str(e)}",
             }
 
     async def cleanup(self) -> None:
         self.tmp.cleanup()
-        logger.debug(f"[{self.pipeline_id}] cleaned up temp files")
+        logger.debug("cleaned up temp files")
 
 
 def parsed_tags(tag_list):
@@ -276,6 +268,9 @@ if __name__ == "__main__":
 
         outputs_path = args.outputs_path
 
+        if os.path.exists(outputs_path):
+            raise ValueError(f"Output directory already exists: {outputs_path}")
+
         timeout = aiohttp.ClientTimeout(total=160, connect=40, sock_read=60)
         connector = aiohttp.TCPConnector(limit=cfg.defaults.http_connection_limit)
         async with aiohttp.ClientSession(timeout=timeout, connector=connector) as session:
@@ -314,11 +309,9 @@ if __name__ == "__main__":
             if geom.geom_type != "Polygon":
                 raise ValueError(f"Feature must be POLYGON type, got: {geom.geom_type}")
 
-            pipeline_id = os.environ.get("NOMAD_PIPELINE_JOB_ID", "test_pipeline_run")
-
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, pipeline_id, args.tags, outputs_path, log_db)
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, args.tags, outputs_path, log_db)
 
             try:
                 result = await pipeline.run()
