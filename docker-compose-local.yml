@@ -35,30 +35,6 @@ services:
     networks:
       - autoeval-net
 
-  stac-data-loader:
-    container_name: stac-data-loader
-    image: curlimages/curl:latest
-    volumes:
-      - ./testdata:/testdata:ro
-    depends_on:
-      stac-fastapi-pgstac:
-        condition: service_healthy
-    networks:
-      - autoeval-net
-    command: |
-      sh -c "
-      echo 'Loading STAC collection...'
-      curl -X POST http://stac-fastapi-pgstac:8888/collections \
-        -H 'Content-Type: application/json' \
-        -d @/testdata/benchmark/collection.json \
-        -f -v || echo 'Failed to load collection'
-      echo 'Loading STAC item...'
-      curl -X POST http://stac-fastapi-pgstac:8888/collections/usgs-fim-collection/items \
-        -H 'Content-Type: application/json' \
-        -d @/testdata/benchmark/01080203-shvm3-usgs.json \
-        -f -v || echo 'Failed to load item'
-      echo 'Data loading complete'
-      "
 
   asset-server:
     container_name: asset-server
