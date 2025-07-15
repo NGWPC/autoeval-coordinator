@@ -10,8 +10,9 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 3. Run `docker compose -f docker-compose-local.yml up`
 4. Register Jobs (see ./local-nomad/README.md)
 5. Load the test stac data by running `./testdata/benchmark/load-test-stac-data.sh`
-6. Create required container images from autoeval-jobs repo
-7. Dispatch a pipeline job through Nomad UI or API
+6. Create required container images from autoeval-jobs repo 
+7. Build the container image inside this repo with `docker build -t autoeval-coordinator:local .`
+8. Dispatch a pipeline job through Nomad UI or API
 
 **Tips for working with .env files:**
 - The example.env is a good place to look to make a .env file that is configured for local deployment. This .env file can be stored as .env.local when not in use and copied to .env when local deployment is desired. Depending on which deployment configuration is desired different .env files can be saved locally within the repo without being tracked by git. For example, you could also have a .env.test environment file for deploying to the AWS Test account. 
@@ -21,7 +22,7 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 Once you have gone through the steps above to spin up a local environment you can run a pipeline job with the test data using the following command:
 
 ```
-docker exec nomad-server nomad job dispatch -meta="aoi=/testdata/query-polygon.gpkg" -meta="outputs_path=/outputs/test-run" -meta="hand_index_path=/testdata/hand/parquet-index/" -meta="benchmark_sources=usgs-fim-collection" pipeline
+docker exec nomad-server nomad job dispatch -meta="aoi=/testdata/query-polygon.gpkg" -meta="outputs_path=/outputs/test-run" -meta="hand_index_path=/testdata/hand/parquet-index/" -meta="benchmark_sources=usgs-fim-collection" -meta tags="batch_name=HAND-V2 aoi_name=myaoi another_tag=dff" pipeline
 ```
 
 If you prefer to use curl from your host machine then the request to post the job using the Nomad API is:
@@ -34,7 +35,8 @@ curl -X POST \
       "aoi": "/testdata/query-polygon.gpkg",
       "outputs_path": "/outputs/test-run",
       "hand_index_path": "/testdata/hand/parquet-index/",
-      "benchmark_sources": "usgs-fim-collection"
+      "benchmark_sources": "usgs-fim-collection",
+      "tags": "batch_name=HAND-V2 aoi_name=myaoi another_tag=dff"
     }
   }' \
   http://localhost:4646/v1/job/pipeline/dispatch
