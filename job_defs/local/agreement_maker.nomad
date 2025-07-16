@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "agreement_maker" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -30,13 +35,18 @@ job "agreement_maker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
-        force_pull = true
-
-        auth {
-          username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
-          password = "${NOMAD_META_registry_token}"
-        }
+        # Use local development image - must use specific tag (not 'latest')
+        # to prevent Nomad from trying to pull from a registry
+        image = "autoeval-jobs-gval:local" 
+        force_pull = false
+        network_mode = "host"
+        
+        # Mount local test data and output directory
+        volumes = [
+          "${var.repo_root}/testdata:/testdata:ro",
+          "/tmp/autoeval-outputs:/outputs:rw"
+        ]
+        
         command = "python3"
         args = [
           "/deploy/agreement_maker/make_agreement.py",
@@ -86,7 +96,8 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 12000 # Higher memory for large raster processing
+        # set small here for github runner test (8gb total memory)
+        memory = 4000 
       }
 
       logs {

@@ -1,3 +1,8 @@
+variable "repo_root" {
+  description = "Path to the repository root directory"
+  type        = string
+}
+
 job "fim_mosaicker" {
   datacenters = ["dc1"] 
   type        = "batch"
@@ -26,13 +31,17 @@ job "fim_mosaicker" {
       driver = "docker"
 
       config {
-        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
-        force_pull = true
-
-        auth {
-          username = "ReadOnly_NGWPC_Group_Deploy_Token"
-          password = "${NOMAD_META_registry_token}"
-        }
+        # Use local development image - must use specific tag (not 'latest')
+        # to prevent Nomad from trying to pull from a registry
+        image = "autoeval-jobs:local" 
+        force_pull = false
+        network_mode = "host"
+        
+        # Mount local test data and output directory
+        volumes = [
+          "${var.repo_root}/testdata:/testdata:ro",
+          "/tmp/autoeval-outputs:/outputs:rw"
+        ]
 
         command = "python3"
         args = [
@@ -75,7 +84,8 @@ job "fim_mosaicker" {
 
       resources {
         cpu    = 1000 
-        memory = 4096 
+        # set small here for github runner test (8gb total memory)
+        memory = 4000 
       }
 
       logs {
