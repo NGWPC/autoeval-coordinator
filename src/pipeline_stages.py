@@ -62,14 +62,12 @@ class PipelineStage(ABC):
         nomad_service,
         data_service,
         path_factory: PathFactory,
-        pipeline_id: str,
         tags: Dict[str, str],
     ):
         self.config = config
         self.nomad = nomad_service
         self.data_svc = data_service
         self.path_factory = path_factory
-        self.pipeline_id = pipeline_id
         self.tags = tags
 
     @abstractmethod
@@ -83,10 +81,10 @@ class PipelineStage(ABC):
         pass
 
     def log_stage_start(self, stage_name: str, input_count: int):
-        logger.debug(f"[{self.pipeline_id}] {stage_name}: Starting with {input_count} inputs")
+        logger.debug(f"{stage_name}: Starting with {input_count} inputs")
 
     def log_stage_complete(self, stage_name: str, success_count: int, total_count: int):
-        logger.debug(f"[{self.pipeline_id}] {stage_name}: {success_count}/{total_count} succeeded")
+        logger.debug(f"{stage_name}: {success_count}/{total_count} succeeded")
 
     def _get_base_meta_kwargs(self) -> Dict[str, str]:
         return {
@@ -134,11 +132,10 @@ class InundationStage(PipelineStage):
         nomad_service,
         data_service,
         path_factory: PathFactory,
-        pipeline_id: str,
         tags: Dict[str, str],
         catchments: Dict[str, Dict[str, Any]],
     ):
-        super().__init__(config, nomad_service, data_service, path_factory, pipeline_id, tags)
+        super().__init__(config, nomad_service, data_service, path_factory, tags)
         self.catchments = catchments
 
     def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
@@ -156,7 +153,9 @@ class InundationStage(PipelineStage):
 
         for result in valid_results:
             for catch_id, catchment_info in self.catchments.items():
-                output_path = self.path_factory.inundation_output_path(result.scenario_id, catch_id)
+                output_path = self.path_factory.inundation_output_path(
+                    result.collection_name, result.scenario_name, catch_id
+                )
                 result.set_path("inundation", f"catchment_{catch_id}", output_path)
 
                 task = asyncio.create_task(self._process_catchment(result, catch_id, catchment_info, output_path))
@@ -205,10 +204,11 @@ class InundationStage(PipelineStage):
             raise ValueError(f"No parquet_path found for catchment {catch_id}")
 
         parquet_path = await self.data_svc.copy_file_to_uri(
-            local_parquet, self.path_factory.catchment_path(result.scenario_id, catch_id, "catchment_data.parquet")
+            local_parquet,
+            self.path_factory.inundation_parquet_path(result.collection_name, result.scenario_name, catch_id),
         )
         flowfile_s3_path = await self.data_svc.copy_file_to_uri(
-            result.flowfile_path, self.path_factory.catchment_path(result.scenario_id, catch_id, "flowfile.csv")
+            result.flowfile_path, self.path_factory.flowfile_path(result.collection_name, result.scenario_name)
         )
 
         meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
@@ -221,7 +221,6 @@ class InundationStage(PipelineStage):
             self.config.jobs.hand_inundator,
             prefix=tags_str,
             meta=meta.model_dump(),
-            pipeline_id=self.pipeline_id,
         )
         logger.debug(f"[{result.scenario_id}/{catch_id}] inundator done → {job_id}")
         return job_id
@@ -262,7 +261,7 @@ class MosaicStage(PipelineStage):
                 continue
 
             # HAND mosaic
-            hand_output_path = self.path_factory.hand_mosaic_path(result.scenario_id)
+            hand_output_path = self.path_factory.hand_mosaic_path(result.collection_name, result.scenario_name)
             result.set_path("mosaic", "hand", hand_output_path)
             hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
 
@@ -275,13 +274,14 @@ class MosaicStage(PipelineStage):
                     self.config.jobs.fim_mosaicker,
                     prefix=hand_tags_str,
                     meta=hand_meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
                 )
             )
             hand_tasks.append(hand_task)
 
             # Benchmark mosaic
-            benchmark_output_path = self.path_factory.benchmark_mosaic_path(result.scenario_id)
+            benchmark_output_path = self.path_factory.benchmark_mosaic_path(
+                result.collection_name, result.scenario_name
+            )
             result.set_path("mosaic", "benchmark", benchmark_output_path)
             benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
 
@@ -294,7 +294,6 @@ class MosaicStage(PipelineStage):
                     self.config.jobs.fim_mosaicker,
                     prefix=benchmark_tags_str,
                     meta=benchmark_meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
                 )
             )
             benchmark_tasks.append(benchmark_task)
@@ -355,8 +354,8 @@ class AgreementStage(PipelineStage):
             hand_mosaic = result.get_path("mosaic", "hand")
             benchmark_mosaic = result.get_path("mosaic", "benchmark")
 
-            agreement_output_path = self.path_factory.agreement_map_path(result.scenario_id)
-            metrics_output_path = self.path_factory.agreement_metrics_path(result.scenario_id)
+            agreement_output_path = self.path_factory.agreement_map_path(result.collection_name, result.scenario_name)
+            metrics_output_path = self.path_factory.agreement_metrics_path(result.collection_name, result.scenario_name)
 
             result.set_path("agreement", "map", agreement_output_path)
             result.set_path("agreement", "metrics", metrics_output_path)
@@ -374,7 +373,6 @@ class AgreementStage(PipelineStage):
                     self.config.jobs.agreement_maker,
                     prefix=agreement_tags_str,
                     meta=meta.model_dump(),
-                    pipeline_id=self.pipeline_id,
                 )
             )
             tasks.append(task)
