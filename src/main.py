@@ -15,6 +15,7 @@ import geopandas as gpd
 
 from data_service import DataService
 from load_config import AppConfig, load_config
+from metrics_aggregator import MetricsAggregator
 from nomad_job_manager import NomadJobManager
 from pipeline_log_db import PipelineLogDB
 from pipeline_stages import AgreementStage, InundationStage, MosaicStage
@@ -60,6 +61,7 @@ class PolygonPipeline:
         self.catchments: Dict[str, Dict[str, Any]] = {}
         self.flow_scenarios: Dict[str, Dict[str, str]] = {}
         self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
+        self.stac_results: Dict[str, Dict[str, Dict[str, List[str]]]] = {}
 
     async def initialize(self) -> None:
         """Query for catchments and flow scenarios."""
@@ -70,6 +72,7 @@ class PolygonPipeline:
 
         # Extract benchmark rasters from STAC scenarios
         raw_scenarios = stac_data.get("scenarios", {})
+        self.stac_results = raw_scenarios
         self.benchmark_scenarios = {}
         for collection, scenarios in raw_scenarios.items():
             self.benchmark_scenarios[collection] = {}
@@ -136,6 +139,19 @@ class PolygonPipeline:
             results = await inundation_stage.run(results)
             results = await mosaic_stage.run(results)
             results = await agreement_stage.run(results)
+
+            if results:
+                logger.info("Running metrics aggregation...")
+                try:
+                    aggregator = MetricsAggregator(
+                        outputs_path=str(self.path_factory.base),
+                        stac_results=self.stac_results,
+                        data_service=self.data_svc,
+                    )
+                    results_path = aggregator.save_results(self.path_factory.results_path())
+                    logger.info(f"Metrics aggregation completed: {results_path}")
+                except Exception as e:
+                    logger.error(f"Metrics aggregation failed: {e}")
 
             successful_results = [r for r in results if r.status == "completed"]
             total_attempted = len([r for r in results if r.status != "pending"])

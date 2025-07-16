@@ -79,3 +79,7 @@ class PathFactory:
     def logs_path(self) -> str:
         """Generate path for pipeline logs: base/logs.txt"""
         return f"{self.base}/logs.txt"
+    
+    def results_path(self) -> str:
+        """Generate path for aggregated results: base/results.csv"""
+        return f"{self.base}/results.csv"

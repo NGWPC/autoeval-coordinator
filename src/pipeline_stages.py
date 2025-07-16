@@ -153,7 +153,9 @@ class InundationStage(PipelineStage):
 
         for result in valid_results:
             for catch_id, catchment_info in self.catchments.items():
-                output_path = self.path_factory.inundation_output_path(result.collection_name, result.scenario_name, catch_id)
+                output_path = self.path_factory.inundation_output_path(
+                    result.collection_name, result.scenario_name, catch_id
+                )
                 result.set_path("inundation", f"catchment_{catch_id}", output_path)
 
                 task = asyncio.create_task(self._process_catchment(result, catch_id, catchment_info, output_path))
@@ -202,7 +204,8 @@ class InundationStage(PipelineStage):
             raise ValueError(f"No parquet_path found for catchment {catch_id}")
 
         parquet_path = await self.data_svc.copy_file_to_uri(
-            local_parquet, self.path_factory.inundation_parquet_path(result.collection_name, result.scenario_name, catch_id)
+            local_parquet,
+            self.path_factory.inundation_parquet_path(result.collection_name, result.scenario_name, catch_id),
         )
         flowfile_s3_path = await self.data_svc.copy_file_to_uri(
             result.flowfile_path, self.path_factory.flowfile_path(result.collection_name, result.scenario_name)
@@ -271,12 +274,14 @@ class MosaicStage(PipelineStage):
                     self.config.jobs.fim_mosaicker,
                     prefix=hand_tags_str,
                     meta=hand_meta.model_dump(),
-                        )
+                )
             )
             hand_tasks.append(hand_task)
 
             # Benchmark mosaic
-            benchmark_output_path = self.path_factory.benchmark_mosaic_path(result.collection_name, result.scenario_name)
+            benchmark_output_path = self.path_factory.benchmark_mosaic_path(
+                result.collection_name, result.scenario_name
+            )
             result.set_path("mosaic", "benchmark", benchmark_output_path)
             benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
 
@@ -289,7 +294,7 @@ class MosaicStage(PipelineStage):
                     self.config.jobs.fim_mosaicker,
                     prefix=benchmark_tags_str,
                     meta=benchmark_meta.model_dump(),
-                        )
+                )
             )
             benchmark_tasks.append(benchmark_task)
             task_results.append(result)
@@ -368,7 +373,7 @@ class AgreementStage(PipelineStage):
                     self.config.jobs.agreement_maker,
                     prefix=agreement_tags_str,
                     meta=meta.model_dump(),
-                        )
+                )
             )
             tasks.append(task)
             task_results.append(result)

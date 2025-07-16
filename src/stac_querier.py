@@ -353,6 +353,7 @@ class StacQuerier:
                         gid = m.expand(gid_t) if "\\" in gid_t else gid_t
                         at = m.expand(at_t)
                         bkt = results[short][gid]
+                        item_ids[short][gid].add(item.id)
                         if a.href not in bkt[at]:
                             bkt[at].append(a.href)
                         found.add(gid)
@@ -371,6 +372,7 @@ class StacQuerier:
                 logger.warning(f"Unknown coll '{coll}'; grouping by item.id")
                 gid = item.id
                 bkt = results[short][gid]
+                item_ids[short][gid].add(item.id)
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -379,6 +381,11 @@ class StacQuerier:
                     elif "flow" in k and a.media_type and "csv" in a.media_type:
                         bkt["flowfiles"].append(a.href)
 
+        # Add item IDs to results
+        for collection_short in results:
+            for scenario_id in results[collection_short]:
+                results[collection_short][scenario_id]["stac_items"] = list(item_ids[collection_short][scenario_id])
+        
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
 
@@ -398,9 +405,15 @@ class StacQuerier:
                 en = parse_iso(e)
                 iv = Interval(start=st, end=en)
                 for at, hs in data.items():
-                    for h in hs:
-                        if h not in iv.assets[at]:
-                            iv.assets[at].append(h)
+                    if at == "stac_items":
+                        # Handle stac_items specially - they're a list, not nested lists
+                        for h in hs:
+                            if h not in iv.assets[at]:
+                                iv.assets[at].append(h)
+                    else:
+                        for h in hs:
+                            if h not in iv.assets[at]:
+                                iv.assets[at].append(h)
                 ivs.append(iv)
             except Exception as ex:
                 logger.warning(f"Bad GFM‐Expanded key '{key}': {ex}")
@@ -412,9 +425,15 @@ class StacQuerier:
             if nxt.start <= cur.end + tol:
                 cur.end = max(cur.end, nxt.end)
                 for at, hs in nxt.assets.items():
-                    for h in hs:
-                        if h not in cur.assets[at]:
-                            cur.assets[at].append(h)
+                    if at == "stac_items":
+                        # Handle stac_items specially - they're a list, not nested lists
+                        for h in hs:
+                            if h not in cur.assets[at]:
+                                cur.assets[at].append(h)
+                    else:
+                        for h in hs:
+                            if h not in cur.assets[at]:
+                                cur.assets[at].append(h)
             else:
                 merged.append(cur)
                 cur = nxt
@@ -439,6 +458,7 @@ class StacQuerier:
 
         Returns:
             Dictionary mapping collection -> scenario -> asset_type -> [paths]
+            Each scenario also includes 'stac_items' key with list of STAC item IDs
         """
         self._ensure_client()
 

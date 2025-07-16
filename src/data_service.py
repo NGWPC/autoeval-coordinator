@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import os
+import shutil
 import tempfile
 from contextlib import suppress
+from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from io import StringIO
 
 import fsspec
 import geopandas as gpd
@@ -198,9 +199,6 @@ class DataService:
                         persistent_dir.mkdir(exist_ok=True)
                         persistent_path = persistent_dir / temp_file.name
 
-                        # Copy the file to persistent location
-                        import shutil
-
                         shutil.copy2(temp_file, persistent_path)
 
                         catchments[catch_id] = {
@@ -222,12 +220,33 @@ class DataService:
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
         """Copies a file (e.g., parquet) to a URI (local or S3) using fsspec.
-        Only copies if source is local and destination is S3."""
+        Copies if source is local and destination is S3, or if both are local but paths differ."""
 
-        # Only copy if source is local and destination is S3
-        if not source_path.startswith(("s3://", "http://", "https://")) and dest_uri.startswith("s3://"):
+        # Normalize paths for comparison
+        source_path_normalized = (
+            os.path.abspath(source_path)
+            if not source_path.startswith(("s3://", "http://", "https://"))
+            else source_path
+        )
+        dest_uri_normalized = (
+            os.path.abspath(dest_uri) if not dest_uri.startswith(("s3://", "http://", "https://")) else dest_uri
+        )
+
+        # Copy if source is local and destination is S3, or if both are local but paths differ
+        should_copy = (
+            not source_path.startswith(("s3://", "http://", "https://")) and dest_uri.startswith("s3://")
+        ) or (
+            not source_path.startswith(("s3://", "http://", "https://"))
+            and not dest_uri.startswith(("s3://", "http://", "https://"))
+            and source_path_normalized != dest_uri_normalized
+        )
+
+        if should_copy:
             logging.debug(f"Copying file from {source_path} to {dest_uri}")
             try:
+                if not dest_uri.startswith(("s3://", "http://", "https://")):
+                    os.makedirs(os.path.dirname(dest_uri), exist_ok=True)
+
                 # Run in executor for async operation
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(
@@ -242,7 +261,7 @@ class DataService:
                 logging.exception(f"Failed to copy {source_path} to {dest_uri}")
                 raise ConnectionError(f"Failed to copy file to {dest_uri}") from e
         else:
-            # If already on S3 or both local, just return the source path
+            # If already on S3 or both local with same path, just return the source path
             logging.debug(f"No copy needed - using existing path: {source_path}")
             return source_path
 
@@ -332,6 +351,37 @@ class DataService:
 
         logging.info(f"Validated files: {len(valid_uris)} exist, {len(missing_uris)} missing")
         return valid_uris
+
+    def find_metrics_files(self, base_path: str) -> List[str]:
+        """Find all metrics.csv files in the output directory structure.
+
+        Args:
+            base_path: Base output path (local or S3)
+
+        Returns:
+            List of paths to metrics.csv files
+        """
+        metrics_files = []
+
+        try:
+            if base_path.startswith("s3://"):
+                fs = fsspec.filesystem("s3", **self._s3_options)
+                # Use glob to find all metrics.csv files recursively
+                pattern = f"{base_path.rstrip('/')}/*/*/metrics.csv"
+                metrics_files = fs.glob(pattern)
+                # Add s3:// prefix back since glob strips it
+                metrics_files = [f"s3://{path}" for path in metrics_files]
+            else:
+                base_path_obj = Path(base_path)
+                if base_path_obj.exists():
+                    metrics_files = [str(p) for p in base_path_obj.glob("*/*/metrics.csv")]
+
+            logging.info(f"Found {len(metrics_files)} metrics.csv files in {base_path}")
+            return metrics_files
+
+        except Exception as e:
+            logging.error(f"Error finding metrics files in {base_path}: {e}")
+            return []
 
     def cleanup(self):
         """Clean up resources, including HandIndexQuerier connection."""

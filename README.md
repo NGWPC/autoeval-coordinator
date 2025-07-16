@@ -22,7 +22,7 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 Once you have gone through the steps above to spin up a local environment you can run a pipeline job with the test data using the following command:
 
 ```
-docker exec nomad-server nomad job dispatch -meta="aoi=/testdata/query-polygon.gpkg" -meta="outputs_path=/outputs/test-run" -meta="hand_index_path=/testdata/hand/parquet-index/" -meta="benchmark_sources=usgs-fim-collection" -meta tags="batch_name=HAND-V2 aoi_name=myaoi another_tag=dff" pipeline
+docker exec nomad-server nomad job dispatch -meta="aoi=/testdata/query-polygon.gpkg" -meta="outputs_path=/outputs/test-run" -meta="hand_index_path=/testdata/hand/parquet-index/" -meta="benchmark_sources=usgs-fim-collection" -meta="tags=batch_name=HAND-V2 aoi_name=myaoi another_tag=dff" pipeline
 ```
 
 If you prefer to use curl from your host machine then the request to post the job using the Nomad API is:
