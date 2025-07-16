@@ -224,52 +224,6 @@ def parsed_tags(tag_list):
     return tags
 
 
-def parsed_tags(tag_list):
-    tags = {}
-    internal_tag_keys = {"bench_src", "cand_src", "scenario", "catchment"}
-    required_tag_keys = {"batch_name", "aoi_name"}
-
-    forbidden_chars = {" ", "/", "&", ","}
-
-    for tag in tag_list:
-        if "=" not in tag:
-            raise argparse.ArgumentTypeError(f"Invalid tag format: '{tag}'. Expected key=value.")
-        key, value = tag.split("=", 1)
-
-        for char in forbidden_chars:
-            if char in key:
-                raise argparse.ArgumentTypeError(
-                    f"Tag key '{key}' contains forbidden character '{char}'. Forbidden characters: {', '.join(sorted(forbidden_chars))}"
-                )
-
-        for char in forbidden_chars:
-            if char in value:
-                raise argparse.ArgumentTypeError(
-                    f"Tag value '{value}' contains forbidden character '{char}'. Forbidden characters: {', '.join(sorted(forbidden_chars))}"
-                )
-
-        tags[key] = value
-
-    for internal_key in internal_tag_keys:
-        if internal_key in tags:
-            raise argparse.ArgumentTypeError(
-                f"Tag '{internal_key}' is reserved for internal use and cannot be provided by users."
-            )
-
-    for required_key in required_tag_keys:
-        if required_key not in tags:
-            raise argparse.ArgumentTypeError(
-                f"Required tag '{required_key}' is missing. Required tags: {', '.join(sorted(required_tag_keys))}"
-            )
-
-    if tags:
-        tags_str = ",".join(f"{k}={v}" for k, v in tags.items())
-        if len(tags_str) > 120:
-            raise argparse.ArgumentTypeError(f"Tags exceed 120 character limit ({len(tags_str)} chars): {tags_str}")
-
-    return tags
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run one PolygonPipeline in isolation")
     parser.add_argument(
