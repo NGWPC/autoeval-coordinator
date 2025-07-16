@@ -15,5 +15,4 @@ pipeline_log.db
 .vscode/
 viztracer-visualization.json
 pipeline_trace.json
-test/bench-data/pgstac-data/
 .data
