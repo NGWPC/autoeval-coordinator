@@ -6,6 +6,7 @@ import tempfile
 from contextlib import suppress
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from io import StringIO
 
 import fsspec
 import geopandas as gpd

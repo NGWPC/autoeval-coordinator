@@ -267,6 +267,8 @@ class StacQuerier:
         seen = set()
         ripple_cache: Dict[str, List[str]] = {}
         ripple_best_items = {}
+        # Track STAC item IDs for each scenario
+        item_ids = defaultdict(lambda: defaultdict(set))
 
         for idx, item in enumerate(item_iter, start=1):
             if item.collection_id == "ripple-fim-collection":
@@ -309,6 +311,7 @@ class StacQuerier:
                 group_fn, tests = self.COLLECTIONS[coll]
                 gid = group_fn(item)
                 bucket = results[short][gid]
+                item_ids[short][gid].add(item.id)
                 for k, a in item.assets.items():
                     if not a.href:
                         continue

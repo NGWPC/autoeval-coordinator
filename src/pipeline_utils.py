@@ -75,3 +75,7 @@ class PathFactory:
 
     def agreement_metrics_path(self, collection_name: str, scenario_name: str) -> str:
         return self.source_scenario_path(collection_name, scenario_name, "metrics.csv")
+    
+    def logs_path(self) -> str:
+        """Generate path for pipeline logs: base/logs.txt"""
+        return f"{self.base}/logs.txt"
