@@ -10,9 +10,9 @@ The current evaluation pipeline is primarily designed to generate HAND FIM exten
 3. Run `docker compose -f docker-compose-local.yml up`
 4. Register Jobs (see ./local-nomad/README.md)
 5. Load the test stac data by running `./testdata/benchmark/load-test-stac-data.sh`
-6. Create required container images from autoeval-jobs repo 
+6. Create required container images from autoeval-jobs repo. Once cloned the autoeval-jobs repo and inside it, execute `docker build -f Dockerfile.gval -t autoeval-jobs-gval:local . && docker build -t autoeval-jobs:local .`
 7. Build the container image inside this repo with `docker build -t autoeval-coordinator:local .`
-8. Dispatch a pipeline job through Nomad UI or API
+8. Dispatch a pipeline job through Nomad UI or API (see example below)
 
 **Tips for working with .env files:**
 - The example.env is a good place to look to make a .env file that is configured for local deployment. This .env file can be stored as .env.local when not in use and copied to .env when local deployment is desired. Depending on which deployment configuration is desired different .env files can be saved locally within the repo without being tracked by git. For example, you could also have a .env.test environment file for deploying to the AWS Test account. 
@@ -37,7 +37,8 @@ curl -X POST \
       "hand_index_path": "/testdata/hand/parquet-index/",
       "benchmark_sources": "usgs-fim-collection",
       "tags": "batch_name=HAND-V2 aoi_name=myaoi another_tag=dff"
-    }
+    },
+    "IdPrefixTemplate": "[batch_name=HAND-V2,aoi_name=myaoi,another_tag=dff]"
   }' \
   http://localhost:4646/v1/job/pipeline/dispatch
 ```
