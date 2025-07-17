@@ -4,6 +4,7 @@ pipeline_config.yml
 config/pipeline_config.yml
 config/local_pipeline_config.yml
 config/docker_pipeline_config.yml
+*plan.md
 mock_data/
 simple-eval-pipeline/
 autoeval-jobs/
