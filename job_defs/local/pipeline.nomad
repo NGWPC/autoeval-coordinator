@@ -81,7 +81,8 @@ job "pipeline" {
         HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = "40.0"
         
         # STAC Configuration
-        STAC_API_URL          = "http://127.0.0.1:8888/"
+        # STAC_API_URL          = "http://127.0.0.1:8888/" # local test api
+        STAC_API_URL            = "http://127.0.0.1:8082/" # local api that can be used to query full benchmark STAC
         STAC_OVERLAP_THRESHOLD_PERCENT = "40.0"
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         

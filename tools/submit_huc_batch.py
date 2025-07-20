@@ -8,18 +8,20 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 import nomad
-from tools.extract_wbd_geometries import extract_geometry_by_huc
+
+from extract_wbd_geometries import extract_geometry_by_huc
 
 
-def get_cluster_capacity(nomad_client: nomad.Nomad) -> Dict[str, Dict[str, int]]:
+def get_pipeline_memory_usage(nomad_client: nomad.Nomad) -> Dict[str, Dict[str, int]]:
     """
-    Get current cluster capacity information.
+    Get current cluster capacity information focusing on pipeline jobs only.
 
     Returns:
-        Dict with 'total', 'allocated', and 'available' memory in MB
+        Dict with 'total', 'pipeline_allocated', 'pipeline_queued', and 'pipeline_total' memory in MB
     """
     total_memory = 0
-    allocated_memory = 0
+    pipeline_allocated_memory = 0
+    pipeline_queued_memory = 0
 
     try:
         nodes = nomad_client.nodes.get_nodes()
@@ -29,38 +31,58 @@ def get_cluster_capacity(nomad_client: nomad.Nomad) -> Dict[str, Dict[str, int]]
                 node_id = node["ID"]
                 node_detail = nomad_client.node.get_node(node_id)
 
-                # Add node's total memory
                 node_resources = node_detail.get("NodeResources", {})
                 if "Memory" in node_resources:
                     total_memory += node_resources["Memory"].get("MemoryMB", 0)
 
-                # Get allocations for this node
                 allocations = nomad_client.node.get_allocations(node_id)
 
                 for alloc in allocations:
                     if alloc.get("ClientStatus") == "running":
-                        # Get allocation details
                         alloc_id = alloc["ID"]
                         alloc_detail = nomad_client.allocation.get_allocation(alloc_id)
 
-                        # Sum up memory from allocation resources
-                        alloc_resources = alloc_detail.get("AllocatedResources", {})
-                        if "Shared" in alloc_resources:
-                            allocated_memory += alloc_resources["Shared"].get("MemoryMB", 0)
+                        # Check if this is a pipeline job by examining the job name
+                        job_name = alloc_detail.get("JobID", "")
+                        if job_name.startswith("pipeline/dispatch-"):
+                            # Sum up memory from allocation resources for pipeline jobs only
+                            alloc_resources = alloc_detail.get("AllocatedResources", {})
+                            if "Shared" in alloc_resources:
+                                pipeline_allocated_memory += alloc_resources["Shared"].get("MemoryMB", 0)
 
-                        # Also check task resources
-                        tasks = alloc_resources.get("Tasks", {})
-                        for task_resources in tasks.values():
-                            allocated_memory += task_resources.get("Memory", {}).get("MemoryMB", 0)
+                            # Also check task resources
+                            tasks = alloc_resources.get("Tasks", {})
+                            for task_resources in tasks.values():
+                                pipeline_allocated_memory += task_resources.get("Memory", {}).get("MemoryMB", 0)
+
+        # Get all pipeline jobs to find queued ones
+        jobs = nomad_client.jobs.get_jobs(prefix="pipeline/dispatch-")
+
+        for job in jobs:
+            job_id = job["ID"]
+            job_detail = nomad_client.job.get_job(job_id)
+
+            # Check if job is in pending state
+            if job_detail.get("Status") == "pending":
+                # Get memory requirements from job spec
+                task_groups = job_detail.get("TaskGroups", [])
+                for group in task_groups:
+                    tasks = group.get("Tasks", [])
+                    for task in tasks:
+                        resources = task.get("Resources", {})
+                        pipeline_queued_memory += resources.get("MemoryMB", 0)
+
+        pipeline_total_memory = pipeline_allocated_memory + pipeline_queued_memory
 
         return {
             "total": {"memory": total_memory},
-            "allocated": {"memory": allocated_memory},
-            "available": {"memory": total_memory - allocated_memory},
+            "pipeline_allocated": {"memory": pipeline_allocated_memory},
+            "pipeline_queued": {"memory": pipeline_queued_memory},
+            "pipeline_total": {"memory": pipeline_total_memory},
         }
 
     except Exception as e:
-        logging.error(f"Failed to get cluster capacity: {e}")
+        logging.error(f"Failed to get pipeline memory usage: {e}")
         raise
 
 
@@ -79,12 +101,17 @@ def submit_pipeline_job(
     Returns:
         Dispatched job ID
     """
+    # Ensure output_root doesn't have redundant trailing slashes
+    output_root_clean = output_root.rstrip("/")
+
     meta = {
         "aoi": str(gpkg_path),
-        "outputs_path": f"{output_root}/{huc_code}/",
+        "outputs_path": f"{output_root_clean}/{huc_code}/",
         "hand_index_path": hand_index_path,
         "benchmark_sources": benchmark_sources,
         "tags": f"batch_name={batch_name} aoi_name={huc_code}",
+        "aws_access_key": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+        "aws_secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
     }
 
     try:
@@ -99,7 +126,7 @@ def submit_pipeline_job(
         raise
 
 
-def extract_hucs(wbd_gpkg: str, huc_codes: List[str], temp_dir: Path) -> Dict[str, Path]:
+def extract_hucs(huc_codes: List[str], temp_dir: Path) -> Dict[str, Path]:
     """
     Extract HUC geometries and save as individual gpkg files.
 
@@ -113,7 +140,7 @@ def extract_hucs(wbd_gpkg: str, huc_codes: List[str], temp_dir: Path) -> Dict[st
             logging.info(f"Extracting geometry for HUC {huc_code}")
 
             # Extract geometry
-            gdf = extract_geometry_by_huc(wbd_gpkg, huc_code)
+            gdf = extract_geometry_by_huc(huc_code)
 
             # Save to temp file
             output_file = temp_dir / f"huc_{huc_code}.gpkg"
@@ -134,12 +161,15 @@ def main():
 
     # Required arguments
     parser.add_argument("--batch_name", required=True, help="Name for this batch of jobs (passed as tag)")
-    parser.add_argument("--output_root", required=True, help="Root directory for outputs (HUC code will be appended)")
+    parser.add_argument(
+        "--output_root",
+        required=True,
+        help="Root directory for outputs (HUC code will be appended to create an individual pipelines output path)",
+    )
     parser.add_argument("--hand_index_path", required=True, help="Path to HAND index (passed to pipeline)")
     parser.add_argument(
         "--benchmark_sources", required=True, help="Comma-separated benchmark sources (passed to pipeline)"
     )
-    parser.add_argument("--wbd_gpkg", required=True, help="Path to WBD National geopackage")
     parser.add_argument("--huc_list", required=True, help="Path to text file with HUC codes (one per line)")
 
     # Optional arguments
@@ -147,7 +177,10 @@ def main():
         "--temp_dir", default="/tmp/huc_batch", help="Temporary directory for extracted HUC .gpkg files"
     )
     parser.add_argument(
-        "--memory_threshold", type=int, default=7000, help="Minimum available memory in MB to submit a job"
+        "--capacity_threshold_percent",
+        type=float,
+        default=40.0,
+        help="Maximum percentage of total memory that pipeline jobs can use before blocking new submissions",
     )
     parser.add_argument("--wait_minutes", type=int, default=5, help="Minutes to wait between capacity checks")
 
@@ -177,7 +210,7 @@ def main():
 
     # Extract HUC geometries
     logging.info("Extracting HUC geometries...")
-    huc_files = extract_hucs(args.wbd_gpkg, huc_codes, temp_dir)
+    huc_files = extract_hucs(huc_codes, temp_dir)
 
     if not huc_files:
         logging.error("No HUC geometries extracted successfully")
@@ -201,22 +234,27 @@ def main():
     failed_submissions = []
 
     logging.info(f"Starting job submission for {len(hucs_to_process)} HUCs")
-    logging.info(f"Memory threshold: {args.memory_threshold} MB")
+    logging.info(f"Pipeline capacity threshold: {args.capacity_threshold_percent}%")
     logging.info(f"Wait time between checks: {args.wait_minutes} minutes")
 
     while hucs_to_process:
         try:
-            # Check cluster capacity
-            capacity = get_cluster_capacity(nomad_client)
-            available_memory = capacity["available"]["memory"]
+            # Check pipeline memory usage
+            capacity = get_pipeline_memory_usage(nomad_client)
+            total_memory = capacity["total"]["memory"]
+            pipeline_allocated = capacity["pipeline_allocated"]["memory"]
+            pipeline_queued = capacity["pipeline_queued"]["memory"]
+            pipeline_total = capacity["pipeline_total"]["memory"]
+            pipeline_usage_percent = (pipeline_total / total_memory * 100) if total_memory > 0 else 0
 
             logging.info(
-                f"Cluster capacity - Total: {capacity['total']['memory']} MB, "
-                f"Allocated: {capacity['allocated']['memory']} MB, "
-                f"Available: {available_memory} MB"
+                f"Pipeline memory usage - Total cluster: {total_memory} MB, "
+                f"Pipeline allocated: {pipeline_allocated} MB, "
+                f"Pipeline queued: {pipeline_queued} MB, "
+                f"Pipeline total: {pipeline_total} MB ({pipeline_usage_percent:.1f}%)"
             )
 
-            if available_memory >= args.memory_threshold:
+            if pipeline_usage_percent < args.capacity_threshold_percent:
                 # Submit a job
                 huc_code = hucs_to_process.pop(0)
                 gpkg_path = huc_files[huc_code]
@@ -248,7 +286,7 @@ def main():
             else:
                 # Wait before checking again
                 logging.info(
-                    f"Insufficient memory available ({available_memory} MB < {args.memory_threshold} MB). "
+                    f"Pipeline capacity exceeded ({pipeline_usage_percent:.1f}% >= {args.capacity_threshold_percent}%). "
                     f"Waiting {args.wait_minutes} minutes before next check..."
                 )
                 time.sleep(args.wait_minutes * 60)

@@ -5,92 +5,83 @@ import os
 from pathlib import Path
 
 import geopandas as gpd
+from pygeohydro import WBD  # client to pull WBD geometries
 
 
-def extract_geometry_by_huc(gpkg_path: str, huc_code: str) -> gpd.GeoDataFrame:
+def extract_geometry_by_huc(huc_code: str) -> gpd.GeoDataFrame:
     """
-    Extract geometry from WBD National gpkg for a specific HUC code.
+    Fetch a single HUC polygon (2–12 digit) from the WBD REST service.
 
     Args:
-        gpkg_path: Path to WBD_National.gpkg
-        huc_code: HUC code to extract
+        huc_code: 2, 4, 6, 8, 10 or 12 digit HUC.
 
     Returns:
-        GeoDataFrame with single geometry in EPSG:4326
+        GeoDataFrame with the requested HUC polygon in EPSG:4326.
 
     Raises:
-        ValueError: If HUC code format is invalid or geometry not found
+        ValueError: if the service returns no geometry for that HUC.
     """
-    huc_length = len(huc_code)
-    if huc_length == 2:
-        layer_name = "WBDHU2"
-        huc_field = "HUC2"
-    elif huc_length == 4:
-        layer_name = "WBDHU4"
-        huc_field = "HUC4"
-    elif huc_length == 6:
-        layer_name = "WBDHU6"
-        huc_field = "HUC6"
-    elif huc_length == 8:
-        layer_name = "WBDHU8"
-        huc_field = "HUC8"
-    else:
-        raise ValueError(f"Invalid HUC code length {huc_length}. Expected 2, 4, 6, or 8 digits.")
+    # Determine the layer based on HUC code length
+    huc_len = len(str(huc_code))
+    layer_map = {
+        2: "huc2",
+        4: "huc4", 
+        6: "huc6",
+        8: "huc8",
+        10: "huc10",
+        12: "huc12"
+    }
+    
+    if huc_len not in layer_map:
+        raise ValueError(f"Invalid HUC code length: {huc_len}")
+    
+    layer = layer_map[huc_len]
+    client = WBD(layer=layer)  # initialize the WBD client with appropriate layer
+    
+    # Query for the specific HUC using byids
+    gdf = client.byids(f"huc{huc_len}", [huc_code])
 
-    # Load geodataframe from gpkg with SQL filter
-    sql_filter = f"SELECT * FROM {layer_name} WHERE {huc_field} = '{huc_code}'"
-    filtered_gdf = gpd.read_file(gpkg_path, sql=sql_filter)
+    if gdf.empty:
+        raise ValueError(f"No polygon found for HUC code {huc_code}")
 
-    if len(filtered_gdf) == 0:
-        raise ValueError(f"No polygon found for HUC code {huc_code} in layer {layer_name}")
+    # ensure it’s in WGS84
+    if gdf.crs and gdf.crs.to_epsg() != 4326:
+        gdf = gdf.to_crs(4326)
 
-    if filtered_gdf.crs and filtered_gdf.crs.to_epsg() != 4326:
-        filtered_gdf = filtered_gdf.to_crs("EPSG:4326")
-
-    return filtered_gdf
+    return gdf
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Extract individual HUC geometries from WBD National dataset")
-    parser.add_argument("wbd_gpkg", help="Path to WBD_National.gpkg")
-    parser.add_argument("huc_list", help="Path to text file containing HUC codes (one per line)")
-    parser.add_argument("output_dir", help="Directory to save individual polygon gpkg files")
-
+    parser = argparse.ArgumentParser(description="Extract individual HUC (2–12) geometries via pygeohydro")
+    parser.add_argument("huc_list", help="Text file: one HUC code (2–12 digits) per line")
+    parser.add_argument("output_dir", help="Directory to save individual .gpkg files")
     args = parser.parse_args()
 
     logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO"), format="%(asctime)s %(levelname)s %(message)s")
 
-    output_path = Path(args.output_dir)
-    output_path.mkdir(parents=True, exist_ok=True)
+    outdir = Path(args.output_dir)
+    outdir.mkdir(parents=True, exist_ok=True)
 
-    with open(args.huc_list, "r") as f:
-        huc_codes = [line.strip() for line in f if line.strip()]
+    with open(args.huc_list) as fh:
+        hucs = [line.strip() for line in fh if line.strip()]
 
-    logging.info(f"Processing {len(huc_codes)} HUC codes")
+    logging.info(f"Fetching {len(hucs)} HUC geometries via pygeohydro")
+    success = 0
+    fail = 0
 
-    successful = 0
-    failed = 0
-
-    for i, huc_code in enumerate(huc_codes):
+    for idx, huc in enumerate(hucs):
         try:
-            logging.info(f"[{i}] Extracting geometry for HUC {huc_code}")
-
-            gdf = extract_geometry_by_huc(args.wbd_gpkg, huc_code)
-
-            output_file = output_path / f"huc_{huc_code}.gpkg"
-            gdf.to_file(output_file, driver="GPKG")
-
-            logging.info(f"[{i}] Saved {huc_code} to {output_file}")
-            successful += 1
-
+            logging.info(f"[{idx}] Fetching HUC {huc}")
+            gdf = extract_geometry_by_huc(huc)
+            out_fp = outdir / f"huc_{huc}.gpkg"
+            gdf.to_file(out_fp, driver="GPKG")
+            logging.info(f"[{idx}] Saved {huc} → {out_fp.name}")
+            success += 1
         except Exception as e:
-            logging.error(f"[{i}] Failed to process HUC {huc_code}: {e}")
-            failed += 1
+            logging.error(f"[{idx}] Failed {huc}: {e}")
+            fail += 1
 
-    logging.info(f"\nProcessing complete:")
-    logging.info(f"  Successful: {successful}")
-    logging.info(f"  Failed: {failed}")
-    logging.info(f"  Total: {successful + failed}")
+    logging.info(f"Done: {success} succeeded, {fail} failed ({len(hucs)} total).")
 
 
 if __name__ == "__main__":

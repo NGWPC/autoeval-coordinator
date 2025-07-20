@@ -22,6 +22,13 @@ plugin "docker" {
       enabled = true
     }
     extra_labels = ["job_name", "task_group_name", "task_name", "namespace"]
+    
+    # Disable automatic container cleanup
+    gc {
+      container = false      # Prevent containers from being removed after task completion
+      image = true          # Keep image cleanup enabled
+      image_delay = "24h"   # Wait 24 hours before cleaning unused images
+    }
   }
 }
 

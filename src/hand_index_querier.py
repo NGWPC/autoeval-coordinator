@@ -7,6 +7,7 @@ import duckdb
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Polygon
+from shapely.wkb import loads
 from shapely.wkt import dumps
 
 logger = logging.getLogger(__name__)
@@ -91,9 +92,9 @@ class HandIndexQuerier:
           SELECT
             c.catchment_id,
             c.geometry,
-            c.h3_partition_key
+            c.h3_index
           FROM catchments_partitioned c
-          JOIN transformed_query tq ON ST_Intersects(c.geometry, tq.query_geom)
+          JOIN transformed_query tq ON ST_Intersects(ST_GeomFromWKB(c.geometry), tq.query_geom)
         )
         """
 
@@ -136,7 +137,7 @@ class HandIndexQuerier:
             + """
         SELECT
           fc.catchment_id,
-          ST_AsWKB(fc.geometry) AS geom_wkb
+          fc.geometry AS geom_wkb
         FROM filtered_catchments AS fc;
         """
         )
@@ -146,11 +147,11 @@ class HandIndexQuerier:
             empty_gdf = gpd.GeoDataFrame(columns=["catchment_id", "geometry"], geometry="geometry", crs="EPSG:5070")
             return empty_gdf, pd.DataFrame(), query_poly_5070
 
-        # Decode WKB → shapely geometries
-        wkb_series = geom_df["geom_wkb"].apply(lambda x: bytes(x) if isinstance(x, bytearray) else x)
+        # Convert WKB data to Shapely geometry objects. Wrapping wkb in bytes because duckdb exports a bytearray but shapely wants bytes.
+        geom_df["geometry"] = geom_df["geom_wkb"].apply(lambda wkb: loads(bytes(wkb)) if wkb is not None else None)
         geometries_gdf = gpd.GeoDataFrame(
-            geom_df[["catchment_id"]],
-            geometry=gpd.GeoSeries.from_wkb(wkb_series, crs="EPSG:5070"),
+            geom_df[["catchment_id", "geometry"]],
+            geometry="geometry",
             crs="EPSG:5070",
         )
 
@@ -160,14 +161,13 @@ class HandIndexQuerier:
             + """
         SELECT
           fc.catchment_id,
-          h.* EXCLUDE (catchment_id, h3_partition_key),
-          hrr.rem_raster_id,
+          h.* EXCLUDE (catchment_id, h3_index),
           hrr.raster_path AS rem_raster_path,
           hcr.raster_path AS catchment_raster_path
         FROM filtered_catchments AS fc
         LEFT JOIN hydrotables_partitioned AS h ON fc.catchment_id = h.catchment_id
         LEFT JOIN hand_rem_rasters_partitioned AS hrr ON fc.catchment_id = hrr.catchment_id
-        LEFT JOIN hand_catchment_rasters_partitioned AS hcr ON hrr.rem_raster_id = hcr.rem_raster_id;
+        LEFT JOIN hand_catchment_rasters_partitioned AS hcr ON fc.catchment_id = hcr.catchment_id;
         """
         )
         attributes_df = self.con.execute(sql_attr).fetch_df()
@@ -274,12 +274,6 @@ class HandIndexQuerier:
 
             for catch_id, group in filtered_attrs.groupby("catchment_id"):
                 df = group.drop(columns=["catchment_id"]).copy()
-
-                # Convert UUID columns to strings for Parquet compatibility
-                uuid_columns = ["rem_raster_id", "catchment_raster_id"]
-                for col in uuid_columns:
-                    if col in df.columns:
-                        df[col] = df[col].astype(str)
 
                 out_path = outdir / f"{catch_id}.parquet"
                 df.to_parquet(str(out_path), index=False)

@@ -55,7 +55,7 @@ job "agreement_maker" {
           "--benchmark_path", "${NOMAD_META_benchmark_path}",
           "--output_path", "${NOMAD_META_output_path}",
           "--metrics_path", "${NOMAD_META_metrics_path}",
-          "--clip_geoms", "${NOMAD_META_clip_geoms}",
+          "--mask_dict", "s3://fimc-data/autoeval/test_data/mask_areas.json",
         ]
 
       }
@@ -79,7 +79,7 @@ job "agreement_maker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Processing Configuration
-        DASK_CLUST_MAX_MEM = "12GB"
+        DASK_CLUST_MAX_MEM = "8GB"
         RASTERIO_CHUNK_SIZE = "4096"
         DEFAULT_WRITE_BLOCK_SIZE = "4096"
         COG_BLOCKSIZE = "512"
@@ -96,8 +96,7 @@ job "agreement_maker" {
       }
 
       resources {
-        # set small here for github runner test (8gb total memory)
-        memory = 4000 
+        memory = 8000 
       }
 
       logs {
