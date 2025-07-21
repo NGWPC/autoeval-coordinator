@@ -6,6 +6,7 @@ variable "repo_root" {
 job "pipeline" {
   datacenters = ["dc1"] 
   type        = "batch"
+  priority    = 75 # this needs to be within a delta of 10 of the individual pipeline stage job priority so that those don't preempt running pipeline jobs. It should still be lower so that stage jobs get scheduling preferences
 
   parameterized {
     meta_required = [

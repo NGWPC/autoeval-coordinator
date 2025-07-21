@@ -1,6 +1,7 @@
 job "hand_inundator" {
   datacenters = ["dc1"] 
   type        = "batch"
+  priority    = 80
 
   constraint {
     attribute = "${node.class}"

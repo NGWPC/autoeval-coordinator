@@ -6,6 +6,7 @@ variable "repo_root" {
 job "agreement_maker" {
   datacenters = ["dc1"] 
   type        = "batch"
+  priority    = 80
 
   parameterized {
     meta_required = [

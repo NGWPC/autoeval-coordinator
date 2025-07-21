@@ -385,7 +385,7 @@ class StacQuerier:
         for collection_short in results:
             for scenario_id in results[collection_short]:
                 results[collection_short][scenario_id]["stac_items"] = list(item_ids[collection_short][scenario_id])
-        
+
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
 
@@ -489,11 +489,16 @@ class StacQuerier:
             "datetime": self.datetime_filter,
             **({"intersects": intersects} if intersects else {}),
         }
-        
+
+        # KLUDGE: Hardcode 2022 date range for GFM collections. this will be removed after trial batches with gfm data are completed.
+        if self.collections is not None and any("gfm" in coll.lower() for coll in self.collections):
+            search_kw["datetime"] = "2022-01-01T00:00:00Z/2022-12-31T23:59:59Z"
+            logger.info("KLUDGE: Overriding datetime filter to 2022 for GFM collections")
+
         # Only include collections if specified, otherwise query all available
         if self.collections is not None:
             search_kw["collections"] = self.collections
-        
+
         search_kw = {k: v for k, v in search_kw.items() if v is not None}
 
         try:

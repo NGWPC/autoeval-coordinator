@@ -25,8 +25,8 @@ plugin "docker" {
     
     # Disable automatic container cleanup
     gc {
-      container = true # Prevent containers from being removed after task completion
-      image = false          # Keep image cleanup enabled
+      container = true # remove containers after tasks complete
+      image = false          # Keep docker images cached locally so they don't dissappear
     }
   }
 }

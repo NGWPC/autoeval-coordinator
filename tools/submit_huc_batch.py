@@ -12,80 +12,6 @@ import nomad
 from extract_wbd_geometries import extract_geometry_by_huc
 
 
-def get_pipeline_memory_usage(nomad_client: nomad.Nomad) -> Dict[str, Dict[str, int]]:
-    """
-    Get current cluster capacity information focusing on pipeline jobs only.
-
-    Returns:
-        Dict with 'total', 'pipeline_allocated', 'pipeline_queued', and 'pipeline_total' memory in MB
-    """
-    total_memory = 0
-    pipeline_allocated_memory = 0
-    pipeline_queued_memory = 0
-
-    try:
-        nodes = nomad_client.nodes.get_nodes()
-
-        for node in nodes:
-            if node.get("Status") == "ready":
-                node_id = node["ID"]
-                node_detail = nomad_client.node.get_node(node_id)
-
-                node_resources = node_detail.get("NodeResources", {})
-                if "Memory" in node_resources:
-                    total_memory += node_resources["Memory"].get("MemoryMB", 0)
-
-                allocations = nomad_client.node.get_allocations(node_id)
-
-                for alloc in allocations:
-                    if alloc.get("ClientStatus") == "running":
-                        alloc_id = alloc["ID"]
-                        alloc_detail = nomad_client.allocation.get_allocation(alloc_id)
-
-                        # Check if this is a pipeline job by examining the job name
-                        job_name = alloc_detail.get("JobID", "")
-                        if job_name.startswith("pipeline/dispatch-"):
-                            # Sum up memory from allocation resources for pipeline jobs only
-                            alloc_resources = alloc_detail.get("AllocatedResources", {})
-                            if "Shared" in alloc_resources:
-                                pipeline_allocated_memory += alloc_resources["Shared"].get("MemoryMB", 0)
-
-                            # Also check task resources
-                            tasks = alloc_resources.get("Tasks", {})
-                            for task_resources in tasks.values():
-                                pipeline_allocated_memory += task_resources.get("Memory", {}).get("MemoryMB", 0)
-
-        # Get all pipeline jobs to find queued ones
-        jobs = nomad_client.jobs.get_jobs(prefix="pipeline/dispatch-")
-
-        for job in jobs:
-            job_id = job["ID"]
-            job_detail = nomad_client.job.get_job(job_id)
-
-            # Check if job is in pending state
-            if job_detail.get("Status") == "pending":
-                # Get memory requirements from job spec
-                task_groups = job_detail.get("TaskGroups", [])
-                for group in task_groups:
-                    tasks = group.get("Tasks", [])
-                    for task in tasks:
-                        resources = task.get("Resources", {})
-                        pipeline_queued_memory += resources.get("MemoryMB", 0)
-
-        pipeline_total_memory = pipeline_allocated_memory + pipeline_queued_memory
-
-        return {
-            "total": {"memory": total_memory},
-            "pipeline_allocated": {"memory": pipeline_allocated_memory},
-            "pipeline_queued": {"memory": pipeline_queued_memory},
-            "pipeline_total": {"memory": pipeline_total_memory},
-        }
-
-    except Exception as e:
-        logging.error(f"Failed to get pipeline memory usage: {e}")
-        raise
-
-
 def submit_pipeline_job(
     nomad_client: nomad.Nomad,
     huc_code: str,
@@ -124,6 +50,29 @@ def submit_pipeline_job(
     except Exception as e:
         logging.error(f"Failed to dispatch job for HUC {huc_code}: {e}")
         raise
+
+
+def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
+    """
+    Get the count of running and queued pipeline jobs.
+
+    Returns:
+        Number of pipeline jobs in running or pending status
+    """
+    try:
+        jobs = nomad_client.jobs.get_jobs()
+        pipeline_jobs = [job for job in jobs if job.get("Name", "").startswith("pipeline")]
+
+        running_count = 0
+        for job in pipeline_jobs:
+            job_status = job.get("Status", "")
+            if job_status in ["running", "pending"]:
+                running_count += 1
+
+        return running_count
+    except Exception as e:
+        logging.warning(f"Failed to get running job count: {e}")
+        return 0
 
 
 def extract_hucs(huc_codes: List[str], temp_dir: Path) -> Dict[str, Path]:
@@ -176,13 +125,10 @@ def main():
     parser.add_argument(
         "--temp_dir", default="/tmp/huc_batch", help="Temporary directory for extracted HUC .gpkg files"
     )
+    parser.add_argument("--wait_seconds", type=int, default=0, help="Seconds to wait between job submissions")
     parser.add_argument(
-        "--capacity_threshold_percent",
-        type=float,
-        default=15.0,
-        help="Maximum percentage of total memory that pipeline jobs can use before blocking new submissions",
+        "--max_pipelines", type=int, help="Maximum number of pipeline jobs to allow running/queued concurrently"
     )
-    parser.add_argument("--wait_minutes", type=int, default=5, help="Minutes to wait between capacity checks")
 
     # Nomad connection arguments
     parser.add_argument(
@@ -228,77 +174,47 @@ def main():
         namespace=args.nomad_namespace,
     )
 
-    # Process HUCs
-    hucs_to_process = list(huc_files.keys())
+    # Process HUCs - submit all jobs immediately
     submitted_jobs = []
     failed_submissions = []
 
-    logging.info(f"Starting job submission for {len(hucs_to_process)} HUCs")
-    logging.info(f"Pipeline capacity threshold: {args.capacity_threshold_percent}%")
-    logging.info(f"Wait time between checks: {args.wait_minutes} minutes")
+    logging.info(f"Starting job submission for {len(huc_files)} HUCs")
 
-    while hucs_to_process:
+    for huc_code, gpkg_path in huc_files.items():
+        # Wait for pipeline slots if max limit specified
+        if args.max_pipelines is not None:
+            while True:
+                current_jobs = get_running_pipeline_jobs(nomad_client)
+                if current_jobs < args.max_pipelines:
+                    break
+                wait_time = max(args.wait_seconds, 10)  # Minimum 10 seconds to avoid hammering the API
+                logging.info(f"Maximum pipeline limit ({args.max_pipelines}) reached. Current jobs: {current_jobs}. Waiting {wait_time} seconds...")
+                time.sleep(wait_time)
+
+        logging.info(f"Submitting job for HUC {huc_code}")
+
         try:
-            # Check pipeline memory usage
-            capacity = get_pipeline_memory_usage(nomad_client)
-            total_memory = capacity["total"]["memory"]
-            pipeline_allocated = capacity["pipeline_allocated"]["memory"]
-            pipeline_queued = capacity["pipeline_queued"]["memory"]
-            pipeline_total = capacity["pipeline_total"]["memory"]
-            pipeline_usage_percent = (pipeline_total / total_memory * 100) if total_memory > 0 else 0
-
-            logging.info(
-                f"Pipeline memory usage - Total cluster: {total_memory} MB, "
-                f"Pipeline allocated: {pipeline_allocated} MB, "
-                f"Pipeline queued: {pipeline_queued} MB, "
-                f"Pipeline total: {pipeline_total} MB ({pipeline_usage_percent:.1f}%)"
+            job_id = submit_pipeline_job(
+                nomad_client=nomad_client,
+                huc_code=huc_code,
+                gpkg_path=gpkg_path,
+                batch_name=args.batch_name,
+                output_root=args.output_root,
+                hand_index_path=args.hand_index_path,
+                benchmark_sources=args.benchmark_sources,
             )
 
-            if pipeline_usage_percent < args.capacity_threshold_percent:
-                # Submit a job
-                huc_code = hucs_to_process.pop(0)
-                gpkg_path = huc_files[huc_code]
+            submitted_jobs.append((huc_code, job_id))
+            logging.info(f"Successfully submitted job {job_id} for HUC {huc_code}")
 
-                logging.info(f"Submitting job for HUC {huc_code} ({len(hucs_to_process)} remaining)")
-
-                try:
-                    job_id = submit_pipeline_job(
-                        nomad_client=nomad_client,
-                        huc_code=huc_code,
-                        gpkg_path=gpkg_path,
-                        batch_name=args.batch_name,
-                        output_root=args.output_root,
-                        hand_index_path=args.hand_index_path,
-                        benchmark_sources=args.benchmark_sources,
-                    )
-
-                    submitted_jobs.append((huc_code, job_id))
-                    logging.info(f"Successfully submitted job {job_id} for HUC {huc_code}")
-
-                    # Wait to allow cluster autoscaling and prevent resource exhaustion
-                    logging.info(f"Waiting {args.wait_minutes} minutes before next submission...")
-                    time.sleep(args.wait_minutes * 60)
-
-                except Exception as e:
-                    logging.error(f"Failed to submit job for HUC {huc_code}: {e}")
-                    failed_submissions.append((huc_code, str(e)))
-
-            else:
-                # Wait before checking again
-                logging.info(
-                    f"Pipeline capacity exceeded ({pipeline_usage_percent:.1f}% >= {args.capacity_threshold_percent}%). "
-                    f"Waiting {args.wait_minutes} minutes before next check..."
-                )
-                time.sleep(args.wait_minutes * 60)
-
-        except KeyboardInterrupt:
-            logging.info("Interrupted by user")
-            break
+            # Wait between submissions if specified
+            if args.wait_seconds > 0:
+                logging.info(f"Waiting {args.wait_seconds} seconds before next submission...")
+                time.sleep(args.wait_seconds)
 
         except Exception as e:
-            logging.error(f"Error during capacity check: {e}")
-            logging.info(f"Waiting {args.wait_minutes} minutes before retry...")
-            time.sleep(args.wait_minutes * 60)
+            logging.error(f"Failed to submit job for HUC {huc_code}: {e}")
+            failed_submissions.append((huc_code, str(e)))
 
     # Summary
     logging.info("\n" + "=" * 60)
