@@ -179,7 +179,7 @@ def main():
     parser.add_argument(
         "--capacity_threshold_percent",
         type=float,
-        default=40.0,
+        default=15.0,
         help="Maximum percentage of total memory that pipeline jobs can use before blocking new submissions",
     )
     parser.add_argument("--wait_minutes", type=int, default=5, help="Minutes to wait between capacity checks")

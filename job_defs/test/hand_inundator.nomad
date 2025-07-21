@@ -90,8 +90,7 @@ job "hand_inundator" {
       }
 
       resources {
-        cpu    = 1000 # CPU in MHz (example: 1000 = 1 GHz)
-        memory = 2048 # Memory in MiB 
+        memory = 2000 # Memory in MiB 
       }
 
       logs {

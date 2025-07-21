@@ -96,7 +96,7 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 8000 
+        memory = 4000 
       }
 
       logs {

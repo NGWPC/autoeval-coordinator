@@ -98,7 +98,7 @@ job "pipeline" {
       }
 
       resources {
-        memory = 6000 
+        memory = 4000 
       }
 
       logs {

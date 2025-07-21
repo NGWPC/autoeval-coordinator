@@ -25,9 +25,8 @@ plugin "docker" {
     
     # Disable automatic container cleanup
     gc {
-      container = false      # Prevent containers from being removed after task completion
-      image = true          # Keep image cleanup enabled
-      image_delay = "24h"   # Wait 24 hours before cleaning unused images
+      container = true # Prevent containers from being removed after task completion
+      image = false          # Keep image cleanup enabled
     }
   }
 }
