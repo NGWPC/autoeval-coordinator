@@ -54,21 +54,27 @@ def submit_pipeline_job(
 
 def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
     """
-    Get the count of running and queued pipeline jobs.
+    Get the count of running and queued pipeline jobs by checking allocations.
 
     Returns:
-        Number of pipeline jobs in running or pending status
+        Number of pipeline job allocations in running or pending status
     """
     try:
-        jobs = nomad_client.jobs.get_jobs()
-        pipeline_jobs = [job for job in jobs if job.get("Name", "").startswith("pipeline")]
+        # Get all allocations instead of just jobs, since dispatched jobs create allocations
+        allocations = nomad_client.allocations.get_allocations()
+        pipeline_allocs = [alloc for alloc in allocations if alloc.get("JobID", "").startswith("pipeline")]
 
         running_count = 0
-        for job in pipeline_jobs:
-            job_status = job.get("Status", "")
-            if job_status in ["running", "pending"]:
+        for alloc in pipeline_allocs:
+            alloc_status = alloc.get("ClientStatus", "")
+            # Debug logging to see actual allocation statuses
+            logging.debug(f"Pipeline allocation {alloc.get('JobID', 'unknown')}: ClientStatus={alloc_status}")
+            if alloc_status in ["running", "pending"]:
                 running_count += 1
 
+        logging.debug(
+            f"Found {running_count} running/pending pipeline allocations out of {len(pipeline_allocs)} total pipeline allocations"
+        )
         return running_count
     except Exception as e:
         logging.warning(f"Failed to get running job count: {e}")
@@ -188,7 +194,9 @@ def main():
                 if current_jobs < args.max_pipelines:
                     break
                 wait_time = max(args.wait_seconds, 10)  # Minimum 10 seconds to avoid hammering the API
-                logging.info(f"Maximum pipeline limit ({args.max_pipelines}) reached. Current jobs: {current_jobs}. Waiting {wait_time} seconds...")
+                logging.info(
+                    f"Maximum pipeline limit ({args.max_pipelines}) reached. Current jobs: {current_jobs}. Waiting {wait_time} seconds..."
+                )
                 time.sleep(wait_time)
 
         logging.info(f"Submitting job for HUC {huc_code}")
