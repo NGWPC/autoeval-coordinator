@@ -36,6 +36,7 @@ class InundationDispatchMeta(DispatchMetaBase):
 class MosaicDispatchMeta(DispatchMetaBase):
     raster_paths: List[str]
     output_path: str
+    clip_geometry_path: str = ""
 
     @field_serializer("raster_paths", mode="plain")
     def _ser_raster(self, v: List[str], info):
@@ -239,6 +240,19 @@ class InundationStage(PipelineStage):
 class MosaicStage(PipelineStage):
     """Stage that creates HAND and benchmark mosaics from inundation outputs."""
 
+    def __init__(
+        self,
+        config: AppConfig,
+        nomad_service,
+        data_service,
+        path_factory: PathFactory,
+        tags: Dict[str, str],
+        aoi_path: str,
+    ):
+        super().__init__(config, nomad_service, data_service, path_factory, tags)
+        self.aoi_path = aoi_path
+        self._clip_geometry_s3_path = None
+
     def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """Filter results that have valid inundation outputs."""
         return [r for r in results if r.status == "inundation_complete" and r.get_path("inundation", "valid_outputs")]
@@ -247,6 +261,14 @@ class MosaicStage(PipelineStage):
         """Run mosaic jobs for scenarios with valid inundation outputs."""
         valid_results = self.filter_inputs(results)
         self.log_stage_start("Mosaic", len(valid_results))
+
+        # Copy AOI file to S3 once for all mosaic jobs
+        if valid_results and self.aoi_path:
+            self._clip_geometry_s3_path = await self.data_svc.copy_file_to_uri(
+                self.aoi_path,
+                self.path_factory.aoi_path()
+            )
+            logger.debug(f"Copied AOI file to S3: {self._clip_geometry_s3_path}")
 
         hand_tasks = []
         benchmark_tasks = []
@@ -331,6 +353,7 @@ class MosaicStage(PipelineStage):
         return MosaicDispatchMeta(
             raster_paths=raster_paths,
             output_path=output_path,
+            clip_geometry_path=self._clip_geometry_s3_path or "",
             **self._get_base_meta_kwargs(),
         )
 

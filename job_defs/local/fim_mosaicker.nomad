@@ -18,6 +18,7 @@ job "fim_mosaicker" {
       "aws_access_key",
       "aws_secret_key",
       "aws_session_token",
+      "clip_geometry_path",
     ]
   }
 
@@ -49,6 +50,7 @@ job "fim_mosaicker" {
           "--raster_paths", "${NOMAD_META_raster_paths}",
           "--mosaic_output_path", "${NOMAD_META_output_path}",
           "--fim_type", "${NOMAD_META_fim_type}",
+          "--clip_geometry_path", "${NOMAD_META_clip_geometry_path}",
         ]
 
       }

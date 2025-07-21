@@ -41,6 +41,7 @@ class PolygonPipeline:
         polygon_gdf: gpd.GeoDataFrame,
         tags: Dict[str, str],
         outputs_path: str,
+        aoi_path: str,
         log_db: Optional[PipelineLogDB] = None,
     ):
         self.config = config
@@ -48,6 +49,7 @@ class PolygonPipeline:
         self.data_svc = data_svc
         self.polygon_gdf = polygon_gdf
         self.tags = tags
+        self.aoi_path = aoi_path
         self.log_db = log_db
         # Ensure the temp directory exists
         temp_dir = "/tmp"
@@ -133,7 +135,7 @@ class PolygonPipeline:
                 self.tags,
                 self.catchments,
             )
-            mosaic_stage = MosaicStage(self.config, self.nomad, self.data_svc, self.path_factory, self.tags)
+            mosaic_stage = MosaicStage(self.config, self.nomad, self.data_svc, self.path_factory, self.tags, self.aoi_path)
             agreement_stage = AgreementStage(self.config, self.nomad, self.data_svc, self.path_factory, self.tags)
 
             results = await inundation_stage.run(results)
@@ -331,7 +333,7 @@ if __name__ == "__main__":
 
             logging.info(f"Using HAND index path: {args.hand_index_path}")
 
-            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, args.tags, outputs_path, log_db)
+            pipeline = PolygonPipeline(cfg, nomad, data_svc, polygon_gdf, args.tags, outputs_path, args.aoi, log_db)
             logging.info(f"Started pipeline run for {args.aoi} with outputs to {outputs_path}")
 
             try:
