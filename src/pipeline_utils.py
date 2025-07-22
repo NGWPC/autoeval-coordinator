@@ -38,10 +38,10 @@ class PathFactory:
 
     def __init__(self, config: AppConfig, outputs_path: str):
         self.config = config
-        
+
         # Use provided outputs_path (local or S3) - this should already include the HUC directory
         if outputs_path.startswith("s3://"):
-            self.base = outputs_path.rstrip('/')
+            self.base = outputs_path.rstrip("/")
         else:
             # Local path
             self.base = str(Path(outputs_path))
@@ -75,11 +75,15 @@ class PathFactory:
 
     def agreement_metrics_path(self, collection_name: str, scenario_name: str) -> str:
         return self.source_scenario_path(collection_name, scenario_name, "metrics.csv")
-    
+
     def logs_path(self) -> str:
         """Generate path for pipeline logs: base/logs.txt"""
         return f"{self.base}/logs.txt"
-    
+
     def results_path(self) -> str:
         """Generate path for aggregated results: base/agg_metrics.csv"""
         return f"{self.base}/agg_metrics.csv"
+
+    def aoi_path(self) -> str:
+        """Generate path for AOI file: base/aoi.gpkg"""
+        return f"{self.base}/aoi.gpkg"
