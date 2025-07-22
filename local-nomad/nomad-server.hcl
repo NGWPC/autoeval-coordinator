@@ -22,6 +22,12 @@ plugin "docker" {
       enabled = true
     }
     extra_labels = ["job_name", "task_group_name", "task_name", "namespace"]
+    
+    # Disable automatic image cleanup
+    gc {
+      container = true # remove containers after tasks complete
+      image = false          # Keep docker images cached locally so they don't dissappear
+    }
   }
 }
 

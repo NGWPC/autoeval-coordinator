@@ -36,35 +36,50 @@ class PipelineResult:
 class PathFactory:
     """Centralized path generation for pipeline stages, supporting both local and S3 paths."""
 
-    def __init__(self, config: AppConfig, pipeline_id: str, outputs_path: str):
+    def __init__(self, config: AppConfig, outputs_path: str):
         self.config = config
-        self.pipeline_id = pipeline_id
         
-        # Use provided outputs_path (local or S3)
+        # Use provided outputs_path (local or S3) - this should already include the HUC directory
         if outputs_path.startswith("s3://"):
-            self.base = f"{outputs_path.rstrip('/')}/pipeline_{pipeline_id}"
+            self.base = outputs_path.rstrip('/')
         else:
             # Local path
-            self.base = str(Path(outputs_path) / f"pipeline_{pipeline_id}")
+            self.base = str(Path(outputs_path))
             Path(self.base).mkdir(parents=True, exist_ok=True)
 
-    def scenario_path(self, scenario_id: str, filename: str) -> str:
-        return f"{self.base}/scenario_{scenario_id}/{filename}"
+    def source_scenario_path(self, collection_name: str, scenario_name: str, filename: str) -> str:
+        """Generate path: base/SOURCE/SCENARIO/filename"""
+        return f"{self.base}/{collection_name}/{scenario_name}/{filename}"
 
-    def catchment_path(self, scenario_id: str, catchment_id: str, filename: str) -> str:
-        return f"{self.base}/scenario_{scenario_id}/catchment_{catchment_id}/{filename}"
+    def catchment_path(self, collection_name: str, scenario_name: str, catchment_id: str, filename: str) -> str:
+        """Generate path: base/SOURCE/SCENARIO/catchments/catchment-ID/filename"""
+        return f"{self.base}/{collection_name}/{scenario_name}/catchments/catchment-{catchment_id}/{filename}"
 
-    def inundation_output_path(self, scenario_id: str, catchment_id: str) -> str:
-        return self.catchment_path(scenario_id, catchment_id, "inundation_output.tif")
+    def inundation_output_path(self, collection_name: str, scenario_name: str, catchment_id: str) -> str:
+        return self.catchment_path(collection_name, scenario_name, catchment_id, f"catchment-{catchment_id}.tif")
 
-    def hand_mosaic_path(self, scenario_id: str) -> str:
-        return self.scenario_path(scenario_id, "HAND_mosaic.tif")
+    def inundation_parquet_path(self, collection_name: str, scenario_name: str, catchment_id: str) -> str:
+        return self.catchment_path(collection_name, scenario_name, catchment_id, f"catchment-{catchment_id}.parquet")
 
-    def benchmark_mosaic_path(self, scenario_id: str) -> str:
-        return self.scenario_path(scenario_id, "benchmark_mosaic.tif")
+    def flowfile_path(self, collection_name: str, scenario_name: str) -> str:
+        return self.source_scenario_path(collection_name, scenario_name, "flowfile.csv")
 
-    def agreement_map_path(self, scenario_id: str) -> str:
-        return self.scenario_path(scenario_id, "agreement_map.tif")
+    def hand_mosaic_path(self, collection_name: str, scenario_name: str) -> str:
+        return self.source_scenario_path(collection_name, scenario_name, "inundate_mosaic.tif")
 
-    def agreement_metrics_path(self, scenario_id: str) -> str:
-        return self.scenario_path(scenario_id, "agreement_metrics.csv")
+    def benchmark_mosaic_path(self, collection_name: str, scenario_name: str) -> str:
+        return self.source_scenario_path(collection_name, scenario_name, "benchmark_mosaic.tif")
+
+    def agreement_map_path(self, collection_name: str, scenario_name: str) -> str:
+        return self.source_scenario_path(collection_name, scenario_name, "agreement.tif")
+
+    def agreement_metrics_path(self, collection_name: str, scenario_name: str) -> str:
+        return self.source_scenario_path(collection_name, scenario_name, "metrics.csv")
+    
+    def logs_path(self) -> str:
+        """Generate path for pipeline logs: base/logs.txt"""
+        return f"{self.base}/logs.txt"
+    
+    def results_path(self) -> str:
+        """Generate path for aggregated results: base/agg_metrics.csv"""
+        return f"{self.base}/agg_metrics.csv"
