@@ -66,13 +66,13 @@ def read_agg_metrics(agg_metrics_path: str) -> Optional[pd.DataFrame]:
         return None
 
 
-def aggregate_metrics(output_root: str, calibration_state: str, hand_version: str, resolution: str) -> pd.DataFrame:
+def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolution: str) -> pd.DataFrame:
     """
     Aggregate all agg_metrics.csv files from HUC subdirectories.
 
     Args:
         output_root: Root directory containing HUC subdirectories
-        calibration_state: Calibration state value
+        calb: Calibration flag (True/False)
         hand_version: HAND version value
         resolution: Resolution in meters
 
@@ -92,6 +92,9 @@ def aggregate_metrics(output_root: str, calibration_state: str, hand_version: st
     for huc_code, huc_path in huc_dirs:
         if huc_path.startswith("s3://"):
             agg_metrics_path = f"{huc_path.rstrip('/')}/agg_metrics.csv"
+        elif output_root.startswith("s3://"):
+            # Handle case where huc_path doesn't have s3:// prefix but output_root does
+            agg_metrics_path = f"s3://{huc_path.rstrip('/')}/agg_metrics.csv"
         else:
             agg_metrics_path = str(Path(huc_path) / "agg_metrics.csv")
 
@@ -100,7 +103,7 @@ def aggregate_metrics(output_root: str, calibration_state: str, hand_version: st
         if df is not None and not df.empty:
             # Add new columns
             df.insert(0, "HUC", huc_code)
-            df["calibrated"] = calibration_state
+            df["calibrated"] = "True" if calb else "False"
             df["HAND_version"] = hand_version
             df["resolution_m"] = resolution
 
@@ -127,7 +130,7 @@ def main():
 
     parser.add_argument("output_root", help="Root directory containing HUC subdirectories (can be S3 path)")
 
-    parser.add_argument("--calibration-state", required=True, help="Calibration state value to add to all rows")
+    parser.add_argument("--calb", action="store_true", help="Set calibration flag to True (default: False)")
 
     parser.add_argument("--hand-version", required=True, help="HAND version value to add to all rows")
 
@@ -140,11 +143,11 @@ def main():
 
     logger.info(f"Starting aggregation from {output_root}")
     logger.info(
-        f"Parameters: calibration_state={args.calibration_state}, "
+        f"Parameters: calb={args.calb}, "
         f"hand_version={args.hand_version}, resolution={args.resolution}"
     )
 
-    master_df = aggregate_metrics(output_root, args.calibration_state, args.hand_version, args.resolution)
+    master_df = aggregate_metrics(output_root, args.calb, args.hand_version, args.resolution)
 
     if master_df.empty:
         logger.error("No data to write to master_metrics.csv")
