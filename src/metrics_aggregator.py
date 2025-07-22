@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class MetricsAggregator:
-    """Aggregates metrics.csv files from different scenarios into a single results.csv file."""
+    """Aggregates metrics.csv files from different scenarios into a single agg_metrics.csv file."""
 
     def __init__(self, outputs_path: str, stac_results: Dict[str, Dict[str, Dict[str, List[str]]]], data_service):
         """
@@ -134,20 +134,20 @@ class MetricsAggregator:
 
     def save_results(self, output_path: str) -> str:
         """
-        Aggregate metrics and save to results.csv.
+        Aggregate metrics and save to agg_metrics.csv.
 
         Args:
-            output_path: Path where results.csv should be saved (required)
+            output_path: Path where agg_metrics.csv should be saved (required)
 
         Returns:
-            Path to the saved results.csv file
+            Path to the saved agg_metrics.csv file
         """
 
         # Aggregate the metrics
         results_df = self.aggregate_metrics()
 
         if results_df.empty:
-            logger.warning("No metrics to aggregate, creating empty results.csv")
+            logger.warning("No metrics to aggregate, creating empty agg_metrics.csv")
             results_df = pd.DataFrame(columns=["collection_name", "stac_item_id", "scenario"])
 
         # Save to CSV using fsspec (works for both local and S3)
