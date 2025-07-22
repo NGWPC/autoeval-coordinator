@@ -81,9 +81,5 @@ class PathFactory:
         return f"{self.base}/logs.txt"
     
     def results_path(self) -> str:
-        """Generate path for aggregated results: base/results.csv"""
-        return f"{self.base}/results.csv"
-    
-    def aoi_path(self) -> str:
-        """Generate path for AOI file: base/aoi.gpkg"""
-        return f"{self.base}/aoi.gpkg"
+        """Generate path for aggregated results: base/agg_metrics.csv"""
+        return f"{self.base}/agg_metrics.csv"
