@@ -516,6 +516,17 @@ class StacQuerier:
             if "gfm_expanded" in grouped:
                 grouped["gfm_expanded"] = self._merge_gfm_expanded(grouped["gfm_expanded"])
 
+                # Truncate timestamp ranges to just the first timestamp to get rid of double directory writing issue
+                truncated = {}
+                for scenario_key, scenario_data in grouped["gfm_expanded"].items():
+                    # If key contains a slash (timestamp range), take only the first part
+                    if "/" in scenario_key:
+                        first_timestamp = scenario_key.split("/")[0]
+                        truncated[first_timestamp] = scenario_data
+                    else:
+                        truncated[scenario_key] = scenario_data
+                grouped["gfm_expanded"] = truncated
+
             return dictify(grouped)
 
         except requests.RequestException as rex:
