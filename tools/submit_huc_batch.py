@@ -54,28 +54,32 @@ def submit_pipeline_job(
 
 def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
     """
-    Get the count of running and queued pipeline jobs by checking allocations.
+    Get the count of running and queued pipeline jobs using server-side filtering.
 
     Returns:
-        Number of pipeline job allocations in running or pending status
+        Number of pipeline job allocations in running or queued status
     """
     try:
-        # Get all allocations instead of just jobs, since dispatched jobs create allocations
-        allocations = nomad_client.allocations.get_allocations()
-        pipeline_allocs = [alloc for alloc in allocations if alloc.get("JobID", "").startswith("pipeline")]
+        # Use server-side filtering to get only pipeline jobs with queued or running allocations
+        expr = "ID.startsWith('pipeline-') && (JobSummary.Summary.Queued>0 || JobSummary.Summary.Running>0)"
+        jobs = nomad_client.jobs.get_jobs(filter_=expr)
 
-        running_count = 0
-        for alloc in pipeline_allocs:
-            alloc_status = alloc.get("ClientStatus", "")
-            # Debug logging to see actual allocation statuses
-            logging.debug(f"Pipeline allocation {alloc.get('JobID', 'unknown')}: ClientStatus={alloc_status}")
-            if alloc_status in ["running", "pending"]:
-                running_count += 1
+        in_flight = 0
+        for job in jobs:
+            job_id = job.get("ID", "unknown")
+            if "JobSummary" in job and "Summary" in job["JobSummary"]:
+                for task_group, counts in job["JobSummary"]["Summary"].items():
+                    queued = counts.get("Queued", 0)
+                    running = counts.get("Running", 0)
+                    task_group_total = queued + running
+                    in_flight += task_group_total
+                    # Debug logging to see actual job statuses
+                    logging.debug(f"Pipeline job {job_id}, task group {task_group}: Queued={queued}, Running={running}")
+            else:
+                logging.debug(f"Pipeline job {job_id}: No JobSummary or Summary found")
 
-        logging.debug(
-            f"Found {running_count} running/pending pipeline allocations out of {len(pipeline_allocs)} total pipeline allocations"
-        )
-        return running_count
+        logging.debug(f"Found {in_flight} running/queued pipeline allocations across {len(jobs)} active pipeline jobs")
+        return in_flight
     except Exception as e:
         logging.warning(f"Failed to get running job count: {e}")
         return 0
