@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 class HandIndexQuerier:
     """
-    A class for querying HAND index data from partitioned parquet files.
+    A class for querying HAND index data from parquet files.
     Provides spatial intersection and filtering capabilities.
     """
 
@@ -24,7 +24,7 @@ class HandIndexQuerier:
         Initialize the HandIndexQuerier.
 
         Args:
-            partitioned_base_path: Base path to partitioned parquet files (local or s3://)
+            partitioned_base_path: Base path to parquet files (local or s3://)
             overlap_threshold_percent: Minimum overlap percentage to keep a catchment
         """
         self.partitioned_base_path = partitioned_base_path
@@ -50,11 +50,11 @@ class HandIndexQuerier:
             except duckdb.Error as e:
                 logger.warning("Could not load DuckDB extensions: %s", e)
 
-            # Create partitioned views
-            self._create_partitioned_views()
+            # Create views
+            self._create_views()
 
-    def _create_partitioned_views(self):
-        """Create views for partitioned tables."""
+    def _create_views(self):
+        """Create views for non-partitioned tables."""
         base_path = self.partitioned_base_path
         if not base_path.endswith("/"):
             base_path += "/"
@@ -63,13 +63,13 @@ class HandIndexQuerier:
         CREATE OR REPLACE VIEW catchments_partitioned AS
         SELECT * FROM read_parquet('{base_path}catchments/*/*.parquet', hive_partitioning = 1);
         
-        CREATE OR REPLACE VIEW hydrotables_partitioned AS
-        SELECT * FROM read_parquet('{base_path}hydrotables/*/*.parquet', hive_partitioning = 1);
+        CREATE OR REPLACE VIEW hydrotables AS
+        SELECT * FROM read_parquet('{base_path}hydrotables.parquet');
         
-        CREATE OR REPLACE VIEW hand_rem_rasters_partitioned AS
+        CREATE OR REPLACE VIEW hand_rem_rasters AS
         SELECT * FROM read_parquet('{base_path}hand_rem_rasters.parquet');
         
-        CREATE OR REPLACE VIEW hand_catchment_rasters_partitioned AS
+        CREATE OR REPLACE VIEW hand_catchment_rasters AS
         SELECT * FROM read_parquet('{base_path}hand_catchment_rasters.parquet');
         """
 
@@ -158,19 +158,19 @@ class HandIndexQuerier:
             crs="EPSG:5070",
         )
 
-        # Build and run the attribute query using partitioned tables
+        # Build and run the attribute query using non-partitioned tables
         sql_attr = (
             cte
             + """
         SELECT
           fc.catchment_id,
-          h.* EXCLUDE (catchment_id, h3_index),
+          h.csv_path,
           hrr.raster_path AS rem_raster_path,
           hcr.raster_path AS catchment_raster_path
         FROM filtered_catchments AS fc
-        LEFT JOIN hydrotables_partitioned AS h ON fc.catchment_id = h.catchment_id
-        LEFT JOIN hand_rem_rasters_partitioned AS hrr ON fc.catchment_id = hrr.catchment_id
-        LEFT JOIN hand_catchment_rasters_partitioned AS hcr ON fc.catchment_id = hcr.catchment_id;
+        LEFT JOIN hydrotables AS h ON fc.catchment_id = h.catchment_id
+        LEFT JOIN hand_rem_rasters AS hrr ON fc.catchment_id = hrr.catchment_id
+        LEFT JOIN hand_catchment_rasters AS hcr ON fc.catchment_id = hcr.catchment_id;
         """
         )
         attributes_df = self.con.execute(sql_attr).fetch_df()
