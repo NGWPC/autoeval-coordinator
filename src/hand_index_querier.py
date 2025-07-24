@@ -44,6 +44,9 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
+                self.con.execute("SET memory_limit = '7GB';")
+                self.con.execute("SET temp_directory = '/tmp';")
+
             except duckdb.Error as e:
                 logger.warning("Could not load DuckDB extensions: %s", e)
 

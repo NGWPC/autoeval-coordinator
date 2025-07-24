@@ -13,7 +13,7 @@ client {
   cgroup_parent = "nomad"
   
   # Limit total memory to on local computer
-  memory_total_mb = 14336
+  # memory_total_mb = 14336
 }
 plugin "docker" {
   config {
@@ -25,7 +25,7 @@ plugin "docker" {
     
     # Disable automatic image cleanup
     gc {
-      container = true # remove containers after tasks complete
+      container = true # if true remove containers after tasks complete. If you don't remove you can see logs in /tmp
       image = false          # Keep docker images cached locally so they don't dissappear
     }
   }

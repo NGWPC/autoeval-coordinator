@@ -64,6 +64,8 @@ services:
       # cgroup filesystem access required for Nomad client to manage process isolation and resource limits
       - /sys/fs/cgroup:/sys/fs/cgroup:rw
       - /tmp:/tmp
+      # Docker container logs directory for Nomad to read container logs
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     environment:
       - NOMAD_ADDR=${NOMAD_ADDR}
     command: ["nomad", "agent", "-config", "/etc/nomad/nomad.hcl"]
