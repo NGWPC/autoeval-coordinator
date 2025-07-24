@@ -124,7 +124,7 @@ class PolygonPipeline:
                         "autoeval-jobs_version": "0.0.0",
                         "batch_name": self.tags.get("batch_name", ""),
                         "aoi_name": self.tags.get("aoi_name", ""),
-                    }
+                    },
                 )
                 results.append(result)
 
@@ -146,7 +146,6 @@ class PolygonPipeline:
             results = await mosaic_stage.run(results)
             results = await agreement_stage.run(results)
 
-            # Save results to JSON file
             if results:
                 try:
                     results_json_path = self.path_factory.results_json_path()
@@ -165,19 +164,17 @@ class PolygonPipeline:
                             "error": result.error,
                         }
                         serializable_results.append(result_dict)
-                    
-                    # Write to temporary file first, then copy to final location
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
                         json.dump(serializable_results, temp_file, indent=2)
                         temp_json_path = temp_file.name
-                    
+
                     await self.data_svc.copy_file_to_uri(temp_json_path, results_json_path)
                     logger.info(f"Results JSON written to {results_json_path}")
-                    
-                    # Clean up temp file
+
                     if os.path.exists(temp_json_path):
                         os.unlink(temp_json_path)
-                        
+
                 except Exception as e:
                     logger.error(f"Failed to write results JSON: {e}")
 
