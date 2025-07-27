@@ -47,7 +47,7 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
-                self.con.execute(f"SET s3_region = {self.s3_region};")
+                self.con.execute(f"SET s3_region = '{self.s3_region}';")
                 self.con.execute(f"SET s3_access_key_id='{self.credentials.access_key}';")
                 self.con.execute(f"SET s3_secret_access_key='{self.credentials.secret_key}';")
                 self.con.execute(f"SET s3_session_token='{self.credentials.token}';")

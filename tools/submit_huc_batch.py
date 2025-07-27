@@ -271,6 +271,9 @@ def main():
         for huc_code, error in failed_submissions:
             logging.info(f"  HUC {huc_code}: {error}")
 
+    # sleep before cleaning up gpkg's to avoid last submitted jobs not having gpkg's available
+    time.sleep(1200)
+
     logging.info(f"\nCleaning up S3 AOI directory: {s3_base}")
     try:
         s3_fs.rm(s3_base, recursive=True)

@@ -18,4 +18,3 @@ viztracer-visualization.json
 pipeline_trace.json
 .data
 cache/aiohttp_cache.sqlite
-.claude/settings.local.json

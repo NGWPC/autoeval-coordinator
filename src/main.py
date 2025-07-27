@@ -13,6 +13,7 @@ import aiohttp
 import fsspec
 import geopandas as gpd
 
+import default_config
 from data_service import DataService
 from load_config import AppConfig, load_config
 from metrics_aggregator import MetricsAggregator
@@ -122,11 +123,13 @@ class PolygonPipeline:
                     flowfile_path=flowfile_path,
                     benchmark_rasters=benchmark_rasters,
                     metadata={
-                        "autoeval-coordinator_version": "0.0.0",
-                        "autoeval-jobs_version": "0.0.0",
+                        "autoeval_coordinator_version": default_config.AUTOEVAL_COORDINATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.FIM_MOSAICKER_VERSION,
                         "batch_name": self.tags.get("batch_name", ""),
                         "aoi_name": self.tags.get("aoi_name", ""),
-                    }
+                    },
                 )
                 results.append(result)
 
@@ -141,7 +144,9 @@ class PolygonPipeline:
                 self.tags,
                 self.catchments,
             )
-            mosaic_stage = MosaicStage(self.config, self.nomad, self.data_svc, self.path_factory, self.tags, self.aoi_path)
+            mosaic_stage = MosaicStage(
+                self.config, self.nomad, self.data_svc, self.path_factory, self.tags, self.aoi_path
+            )
             agreement_stage = AgreementStage(self.config, self.nomad, self.data_svc, self.path_factory, self.tags)
 
             results = await inundation_stage.run(results)
@@ -167,19 +172,19 @@ class PolygonPipeline:
                             "error": result.error,
                         }
                         serializable_results.append(result_dict)
-                    
+
                     # Write to temporary file first, then copy to final location
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as temp_file:
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
                         json.dump(serializable_results, temp_file, indent=2)
                         temp_json_path = temp_file.name
-                    
+
                     await self.data_svc.copy_file_to_uri(temp_json_path, results_json_path)
                     logger.info(f"Results JSON written to {results_json_path}")
-                    
+
                     # Clean up temp file
                     if os.path.exists(temp_json_path):
                         os.unlink(temp_json_path)
-                        
+
                 except Exception as e:
                     logger.error(f"Failed to write results JSON: {e}")
 
