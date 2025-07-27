@@ -13,6 +13,7 @@ import aiohttp
 import fsspec
 import geopandas as gpd
 
+import default_config
 from data_service import DataService
 from load_config import AppConfig, load_config
 from metrics_aggregator import MetricsAggregator
@@ -120,8 +121,10 @@ class PolygonPipeline:
                     flowfile_path=flowfile_path,
                     benchmark_rasters=benchmark_rasters,
                     metadata={
-                        "autoeval-coordinator_version": "0.0.0",
-                        "autoeval-jobs_version": "0.0.0",
+                        "autoeval_coordinator_version": default_config.AUTOEVAL_COORDINATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.FIM_MOSAICKER_VERSION,
                         "batch_name": self.tags.get("batch_name", ""),
                         "aoi_name": self.tags.get("aoi_name", ""),
                     },
