@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
+import fsspec
 import nomad
 
 from extract_wbd_geometries import extract_geometry_by_huc
@@ -20,6 +21,7 @@ def submit_pipeline_job(
     output_root: str,
     hand_index_path: str,
     benchmark_sources: str,
+    nomad_token: Optional[str] = None,
 ) -> str:
     """
     Submit a pipeline job for a single HUC.
@@ -38,6 +40,8 @@ def submit_pipeline_job(
         "tags": f"batch_name={batch_name} aoi_name={huc_code}",
         "aws_access_key": os.environ.get("AWS_ACCESS_KEY_ID", ""),
         "aws_secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+        "nomad_token": nomad_token or os.environ.get("NOMAD_TOKEN", ""),
+        "registry_token": os.environ.get("REGISTRY_TOKEN", ""),
     }
 
     try:
@@ -170,6 +174,30 @@ def main():
 
     logging.info(f"Successfully extracted {len(huc_files)} HUC geometries")
 
+    # Initialize fsspec S3 filesystem
+    s3_fs = fsspec.filesystem("s3")
+
+    # Upload AOI files to S3
+    s3_aoi_paths = {}
+    s3_base = f"{args.output_root.rstrip('/')}/{args.batch_name}/huc_aois"
+
+    logging.info(f"Uploading AOI files to {s3_base}")
+    for huc_code, local_path in huc_files.items():
+        s3_path = f"{s3_base}/huc_{huc_code}.gpkg"
+        try:
+            with open(local_path, "rb") as local_file:
+                with s3_fs.open(s3_path, "wb") as s3_file:
+                    s3_file.write(local_file.read())
+            s3_aoi_paths[huc_code] = s3_path
+            logging.info(f"Uploaded {local_path} to {s3_path}")
+        except Exception as e:
+            logging.error(f"Failed to upload AOI for HUC {huc_code}: {e}")
+            continue
+
+    if not s3_aoi_paths:
+        logging.error("No AOI files uploaded successfully")
+        return 1
+
     # Initialize Nomad client
     parsed = urlparse(args.nomad_addr)
     nomad_client = nomad.Nomad(
@@ -184,9 +212,9 @@ def main():
     submitted_jobs = []
     failed_submissions = []
 
-    logging.info(f"Starting job submission for {len(huc_files)} HUCs")
+    logging.info(f"Starting job submission for {len(s3_aoi_paths)} HUCs")
 
-    for huc_code, gpkg_path in huc_files.items():
+    for huc_code, s3_path in s3_aoi_paths.items():
         # Wait for pipeline slots if max limit specified
         if args.max_pipelines is not None:
             while True:
@@ -205,11 +233,12 @@ def main():
             job_id = submit_pipeline_job(
                 nomad_client=nomad_client,
                 huc_code=huc_code,
-                gpkg_path=gpkg_path,
+                gpkg_path=s3_path,
                 batch_name=args.batch_name,
                 output_root=args.output_root,
                 hand_index_path=args.hand_index_path,
                 benchmark_sources=args.benchmark_sources,
+                nomad_token=args.nomad_token,
             )
 
             submitted_jobs.append((huc_code, job_id))
@@ -241,6 +270,13 @@ def main():
         logging.info("\nFailed submissions:")
         for huc_code, error in failed_submissions:
             logging.info(f"  HUC {huc_code}: {error}")
+
+    logging.info(f"\nCleaning up S3 AOI directory: {s3_base}")
+    try:
+        s3_fs.rm(s3_base, recursive=True)
+        logging.info("Successfully cleaned up S3 AOI files")
+    except Exception as e:
+        logging.warning(f"Failed to cleanup S3 directory: {e}")
 
     return 0 if not failed_submissions else 1
 

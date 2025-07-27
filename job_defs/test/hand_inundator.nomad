@@ -64,6 +64,10 @@ job "hand_inundator" {
 
       env {
         AWS_DEFAULT_REGION = "us-east-1"
+        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+
         GDAL_CACHEMAX         = "1024"
         
         # GDAL Configuration

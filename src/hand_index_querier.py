@@ -3,6 +3,7 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import boto3
 import duckdb
 import geopandas as gpd
 import pandas as pd
@@ -30,6 +31,8 @@ class HandIndexQuerier:
         self.partitioned_base_path = partitioned_base_path
         self.overlap_threshold_percent = overlap_threshold_percent
         self.con = None
+        self.credentials = boto3.Session().get_credentials()
+        self.s3_region = boto3.Session.region_name
 
     def _ensure_connection(self):
         """Ensure DuckDB connection is established with required extensions."""
@@ -44,6 +47,10 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
+                self.con.execute(f"SET s3_region = {self.s3_region};")
+                self.con.execute(f"SET s3_access_key_id='{self.credentials.access_key}';")
+                self.con.execute(f"SET s3_secret_access_key='{self.credentials.secret_key}';")
+                self.con.execute(f"SET s3_session_token='{self.credentials.token}';")
                 self.con.execute("SET memory_limit = '7GB';")
                 self.con.execute("SET temp_directory = '/tmp';")
 
