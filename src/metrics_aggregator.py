@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class MetricsAggregator:
     """Aggregates metrics.csv files from different scenarios into a single agg_metrics.csv file."""
 
-    def __init__(self, outputs_path: str, stac_results: Dict[str, Dict[str, Dict[str, List[str]]]], data_service):
+    def __init__(self, outputs_path: str, stac_results: Dict[str, Dict[str, Dict[str, List[str]]]], data_service, flow_scenarios: Optional[Dict[str, Dict[str, str]]] = None):
         """
         Initialize the MetricsAggregator.
 
@@ -19,10 +19,12 @@ class MetricsAggregator:
             outputs_path: Path to the HUC output directory (e.g., "/top-level/HAND-ver4/HUC-11090202/")
             stac_results: Results from StacQuerier.query_stac_for_polygon containing STAC item IDs
             data_service: DataService instance for file operations
+            flow_scenarios: Mapping of collection -> scenario -> flowfile path
         """
         self.outputs_path = outputs_path
         self.stac_results = stac_results
         self.data_service = data_service
+        self.flow_scenarios = flow_scenarios or {}
 
     def aggregate_metrics(self) -> pd.DataFrame:
         """
@@ -75,6 +77,10 @@ class MetricsAggregator:
                     metrics_df
                 )  # Join STAC items into semicolon-separated string
                 metrics_df["scenario"] = scenario_name
+                
+                # Add flow column with flowfile URI
+                flow_uri = self.flow_scenarios.get(collection_name, {}).get(scenario_name, "")
+                metrics_df["flow"] = flow_uri
 
                 all_metrics.append(metrics_df)
 
@@ -92,7 +98,7 @@ class MetricsAggregator:
         combined_df = pd.concat(all_metrics, ignore_index=True)
 
         # Reorder columns to put metadata first
-        metadata_cols = ["collection_name", "stac_item_id", "scenario"]
+        metadata_cols = ["collection_name", "stac_item_id", "scenario", "flow"]
         metrics_cols = [col for col in combined_df.columns if col not in metadata_cols]
         combined_df = combined_df[metadata_cols + metrics_cols]
 
@@ -148,7 +154,7 @@ class MetricsAggregator:
 
         if results_df.empty:
             logger.warning("No metrics to aggregate, creating empty agg_metrics.csv")
-            results_df = pd.DataFrame(columns=["collection_name", "stac_item_id", "scenario"])
+            results_df = pd.DataFrame(columns=["collection_name", "stac_item_id", "scenario", "flow"])
 
         # Save to CSV using fsspec (works for both local and S3)
         with fsspec.open(
