@@ -215,8 +215,12 @@ class InundationStage(PipelineStage):
 
         meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
 
-        # add catchment internal tag
-        internal_tags = {"catchment": str(catch_id)[:7]}
+        # add bench_src, scenario, and catchment internal tags
+        internal_tags = {
+            "bench_src": result.collection_name,
+            "scenario": result.scenario_name,
+            "catchment": str(catch_id)[:7]
+        }
         tags_str = self._create_tags_str(internal_tags)
 
         job_id, _ = await self.nomad.dispatch_and_track(

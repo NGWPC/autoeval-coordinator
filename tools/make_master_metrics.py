@@ -102,10 +102,12 @@ def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolutio
 
         if df is not None and not df.empty:
             # Add new columns
-            df.insert(0, "HUC", huc_code)
+            df.insert(0, "huc", huc_code)
             df["calibrated"] = "True" if calb else "False"
-            df["HAND_version"] = hand_version
+            df["version"] = hand_version
             df["resolution_m"] = resolution
+            df["extent_config"] = "COMP"
+            df["full_json_path"] = "null"
 
             all_metrics.append(df)
             logger.info(f"Processed {len(df)} rows from HUC {huc_code}")
@@ -142,10 +144,7 @@ def main():
     output_root = args.output_root.rstrip("/")
 
     logger.info(f"Starting aggregation from {output_root}")
-    logger.info(
-        f"Parameters: calb={args.calb}, "
-        f"hand_version={args.hand_version}, resolution={args.resolution}"
-    )
+    logger.info(f"Parameters: calb={args.calb}, " f"hand_version={args.hand_version}, resolution={args.resolution}")
 
     master_df = aggregate_metrics(output_root, args.calb, args.hand_version, args.resolution)
 
