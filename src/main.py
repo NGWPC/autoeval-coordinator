@@ -68,8 +68,8 @@ class PolygonPipeline:
         self.benchmark_scenarios: Dict[str, Dict[str, List[str]]] = {}
         self.stac_results: Dict[str, Dict[str, Dict[str, List[str]]]] = {}
 
-    async def initialize(self) -> None:
-        """Query for catchments and flow scenarios."""
+    async def initialize(self) -> Optional[Dict[str, Any]]:
+        """Query for catchments and flow scenarios. Returns early exit info if no data found."""
         # Query STAC for flow scenarios (always required)
         logger.debug("Querying STAC for flow scenarios")
         stac_data = await self.data_svc.query_stac_for_flow_scenarios(self.polygon_gdf)
@@ -94,9 +94,15 @@ class PolygonPipeline:
 
         if self.flow_scenarios:
             logger.debug(f"Found {len(self.flow_scenarios)} collections")
-
-        if not self.flow_scenarios:
-            raise RuntimeError("No flow scenarios found")
+        else:
+            logger.warning("No flow scenarios found in STAC query results")
+            return {
+                "status": "no_data",
+                "message": "No flow scenarios found for the given polygon",
+                "catchment_count": 0,
+                "total_scenarios_attempted": 0,
+                "successful_scenarios": 0,
+            }
 
         # Query hand index for catchments
         logger.debug("Querying hand index for catchments")
@@ -104,14 +110,25 @@ class PolygonPipeline:
         self.catchments = data.get("catchments", {})
 
         if not self.catchments:
-            raise RuntimeError("No catchments found")
+            logger.warning("No catchments found in hand index query results")
+            return {
+                "status": "no_data", 
+                "message": "No catchments found for the given polygon",
+                "catchment_count": 0,
+                "total_scenarios_attempted": 0,
+                "successful_scenarios": 0,
+            }
 
         total_scenarios = sum(len(scenarios) for scenarios in self.flow_scenarios.values())
         logger.info(f"Initialization complete: {len(self.catchments)} catchments, " f"{total_scenarios} flow scenarios")
+        return None
 
     async def run(self) -> Dict[str, Any]:
         """Run the pipeline with stage-based parallelism."""
-        await self.initialize()
+        early_exit = await self.initialize()
+        if early_exit is not None:
+            logger.info(f"Pipeline exiting early: {early_exit['message']}")
+            return early_exit
 
         # Build scenario results
         results = []

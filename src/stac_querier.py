@@ -528,13 +528,24 @@ class StacQuerier:
             logger.info(f"Searching collections {collections_msg}")
             search = self.client.search(**search_kw)
             items = list(search.items())  # Convert to list for geometry filtering
+            
+            if not items:
+                logger.info("STAC query returned no items")
+                return {}
 
             # Apply geometry filtering if query polygon is provided
             if query_polygon and self.overlap_threshold_percent:
                 logger.info(f"Applying geometry filtering with {self.overlap_threshold_percent}% overlap threshold")
                 items = self._filter_items_by_geometry(items, query_polygon)
+                if not items:
+                    logger.info("No items remained after geometry filtering")
+                    return {}
 
             grouped = self._format_results(items)
+            
+            if not grouped:
+                logger.info("No valid scenarios found after processing STAC items")
+                return {}
             if "gfm_expanded" in grouped:
                 grouped["gfm_expanded"] = self._merge_gfm_expanded(grouped["gfm_expanded"])
 
