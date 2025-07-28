@@ -269,6 +269,7 @@ class StacQuerier:
         ripple_best_items = {}
         # Track STAC item IDs for each scenario
         item_ids = defaultdict(lambda: defaultdict(set))
+        gauge_info = defaultdict(lambda: defaultdict(lambda: None))
 
         for idx, item in enumerate(item_iter, start=1):
             if item.collection_id == "ripple-fim-collection":
@@ -302,16 +303,17 @@ class StacQuerier:
                 logger.info(f"Processed {idx} items (last: {item.id})")
 
             coll = item.collection_id or "<none>"
-            short = coll.replace("-collection", "").replace("-fim", "")
-            if short == "gfm-expanded":
-                short = "gfm_expanded"
+            collection_key = coll
+            # Handle special case for gfm-expanded-collection to maintain compatibility
+            if coll == "gfm-expanded-collection":
+                collection_key = "gfm_expanded"
 
             # 1) item‐level grouping
             if coll in self.COLLECTIONS:
                 group_fn, tests = self.COLLECTIONS[coll]
                 gid = group_fn(item)
-                bucket = results[short][gid]
-                item_ids[short][gid].add(item.id)
+                bucket = results[collection_key][gid]
+                item_ids[collection_key][gid].add(item.id)
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -352,11 +354,16 @@ class StacQuerier:
                             continue
                         gid = m.expand(gid_t) if "\\" in gid_t else gid_t
                         at = m.expand(at_t)
-                        bkt = results[short][gid]
-                        item_ids[short][gid].add(item.id)
+                        bkt = results[collection_key][gid]
+                        item_ids[collection_key][gid].add(item.id)
                         if a.href not in bkt[at]:
                             bkt[at].append(a.href)
                         found.add(gid)
+
+                        if coll in ["nws-fim-collection", "usgs-fim-collection"]:
+                            gauge = item.properties.get("gauge")
+                            if gauge and gauge_info[collection_key][gid] is None:
+                                gauge_info[collection_key][gid] = gauge
 
                 # append ripple flowfiles
                 if coll == "ripple-fim-collection":
@@ -364,15 +371,21 @@ class StacQuerier:
                         if gid in ripple_cache:
                             logger.info(f"Adding cached flowfiles for {gid}")
                             for href in ripple_cache[gid]:
-                                if href not in results[short][gid]["flowfiles"]:
-                                    results[short][gid]["flowfiles"].append(href)
+                                if href not in results[collection_key][gid]["flowfiles"]:
+                                    results[collection_key][gid]["flowfiles"].append(href)
 
             # 3) fallback
             else:
                 logger.warning(f"Unknown coll '{coll}'; grouping by item.id")
                 gid = item.id
-                bkt = results[short][gid]
-                item_ids[short][gid].add(item.id)
+                bkt = results[collection_key][gid]
+                item_ids[collection_key][gid].add(item.id)
+
+                if "nws" in coll.lower() or "usgs" in coll.lower():
+                    gauge = item.properties.get("gauge")
+                    if gauge and gauge_info[collection_key][gid] is None:
+                        gauge_info[collection_key][gid] = gauge
+
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -381,10 +394,11 @@ class StacQuerier:
                     elif "flow" in k and a.media_type and "csv" in a.media_type:
                         bkt["flowfiles"].append(a.href)
 
-        # Add item IDs to results
-        for collection_short in results:
-            for scenario_id in results[collection_short]:
-                results[collection_short][scenario_id]["stac_items"] = list(item_ids[collection_short][scenario_id])
+        # Add item IDs and gauge information to results
+        for collection_key in results:
+            for scenario_id in results[collection_key]:
+                results[collection_key][scenario_id]["stac_items"] = list(item_ids[collection_key][scenario_id])
+                results[collection_key][scenario_id]["gauge"] = gauge_info[collection_key][scenario_id]
 
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
@@ -410,6 +424,10 @@ class StacQuerier:
                         for h in hs:
                             if h not in iv.assets[at]:
                                 iv.assets[at].append(h)
+                    elif at == "gauge":
+                        # Handle gauge specially - it's a single value, not a list
+                        if hs is not None:
+                            iv.assets[at] = hs
                     else:
                         for h in hs:
                             if h not in iv.assets[at]:
@@ -430,6 +448,10 @@ class StacQuerier:
                         for h in hs:
                             if h not in cur.assets[at]:
                                 cur.assets[at].append(h)
+                    elif at == "gauge":
+                        # Handle gauge specially - use the first non-null value
+                        if hs is not None and at not in cur.assets:
+                            cur.assets[at] = hs
                     else:
                         for h in hs:
                             if h not in cur.assets[at]:

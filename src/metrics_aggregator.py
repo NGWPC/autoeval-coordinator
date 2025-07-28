@@ -31,8 +31,19 @@ class MetricsAggregator:
         Aggregate all metrics.csv files into a single DataFrame.
 
         Returns:
-            DataFrame with columns: collection_name, stac_item_id, scenario, and all metrics columns
+            DataFrame with columns: collection_id, stac_item_id, scenario, and all metrics columns
         """
+        # Map collection names from directory structure to their full STAC collection IDs
+        collection_mapping = {
+            "ble": "ble-collection",
+            "nws": "nws-fim-collection", 
+            "usgs": "usgs-fim-collection",
+            "ripple": "ripple-fim-collection",
+            "gfm": "gfm-collection",
+            "gfm_expanded": "gfm_expanded",  # Special case
+            "hwm": "hwm-collection"
+        }
+
         all_metrics = []
 
         # Find all metrics.csv files in the directory structure
@@ -69,10 +80,12 @@ class MetricsAggregator:
                     logger.warning(f"Empty metrics file: {metrics_file}")
                     continue
 
-                stac_items = self._get_stac_items_for_scenario(collection_name, scenario_name)
+                stac_items, gauge = self._get_stac_items_for_scenario(collection_name, scenario_name, collection_mapping)
 
                 # Add the required columns to each row
-                metrics_df["collection_name"] = collection_name
+                # Use the full collection ID from the mapping
+                full_collection_id = collection_mapping.get(collection_name.lower(), collection_name)
+                metrics_df["collection_id"] = full_collection_id
                 metrics_df["stac_item_id"] = [";".join(stac_items)] * len(
                     metrics_df
                 )  # Join STAC items into semicolon-separated string
@@ -81,6 +94,9 @@ class MetricsAggregator:
                 # Add flow column with flowfile URI
                 flow_uri = self.flow_scenarios.get(collection_name, {}).get(scenario_name, "")
                 metrics_df["flow"] = flow_uri
+                
+                # Add nws_lid column with gauge information
+                metrics_df["nws_lid"] = gauge
 
                 all_metrics.append(metrics_df)
 
@@ -98,7 +114,7 @@ class MetricsAggregator:
         combined_df = pd.concat(all_metrics, ignore_index=True)
 
         # Reorder columns to put metadata first
-        metadata_cols = ["collection_name", "stac_item_id", "scenario", "flow"]
+        metadata_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"]
         metrics_cols = [col for col in combined_df.columns if col not in metadata_cols]
         combined_df = combined_df[metadata_cols + metrics_cols]
 
@@ -106,19 +122,20 @@ class MetricsAggregator:
 
         return combined_df
 
-    def _get_stac_items_for_scenario(self, collection_name: str, scenario_name: str) -> List[str]:
+    def _get_stac_items_for_scenario(self, collection_name: str, scenario_name: str, collection_mapping: dict) -> tuple[List[str], Optional[str]]:
         """
-        Get STAC item IDs for a specific collection and scenario.
+        Get STAC item IDs and gauge information for a specific collection and scenario.
 
         Args:
             collection_name: Name of the collection (e.g., "BLE", "USGS")
             scenario_name: Name of the scenario (e.g., "100yr", "Minor")
+            collection_mapping: Mapping from short names to full collection IDs
 
         Returns:
-            List of STAC item IDs for this scenario
+            Tuple of (List of STAC item IDs for this scenario, gauge string or None)
         """
-        # Just ensure lowercase for consistency
-        stac_collection = collection_name.lower()
+        # Get the full collection ID from the mapping
+        stac_collection = collection_mapping.get(collection_name.lower(), collection_name.lower())
 
         # Look for the scenario in the STAC results
         if stac_collection in self.stac_results:
@@ -128,15 +145,16 @@ class MetricsAggregator:
 
             # Try exact match first
             if scenario_name in scenarios:
-                return scenarios[scenario_name].get("stac_items", [])
+                scenario_data = scenarios[scenario_name]
+                return scenario_data.get("stac_items", []), scenario_data.get("gauge")
 
             # Try case-insensitive match
             for scenario_key, scenario_data in scenarios.items():
                 if scenario_key.lower() == scenario_name.lower():
-                    return scenario_data.get("stac_items", [])
+                    return scenario_data.get("stac_items", []), scenario_data.get("gauge")
 
         logger.warning(f"No STAC items found for {collection_name}/{scenario_name}")
-        return []
+        return [], None
 
     def save_results(self, output_path: str) -> str:
         """
@@ -154,7 +172,7 @@ class MetricsAggregator:
 
         if results_df.empty:
             logger.warning("No metrics to aggregate, creating empty agg_metrics.csv")
-            results_df = pd.DataFrame(columns=["collection_name", "stac_item_id", "scenario", "flow"])
+            results_df = pd.DataFrame(columns=["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"])
 
         # Save to CSV using fsspec (works for both local and S3)
         with fsspec.open(
