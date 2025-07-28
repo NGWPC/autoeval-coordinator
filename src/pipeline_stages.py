@@ -203,9 +203,10 @@ class InundationStage(PipelineStage):
         if not local_parquet:
             raise ValueError(f"No parquet_path found for catchment {catch_id}")
 
+        # Parquet files are stored in catchment-data-indices directory
         parquet_path = await self.data_svc.copy_file_to_uri(
             local_parquet,
-            self.path_factory.inundation_parquet_path(result.collection_name, result.scenario_name, catch_id),
+            self.path_factory.catchment_parquet_path(catch_id),
         )
         flowfile_s3_path = await self.data_svc.copy_file_to_uri(
             result.flowfile_path, self.path_factory.flowfile_path(result.collection_name, result.scenario_name)
