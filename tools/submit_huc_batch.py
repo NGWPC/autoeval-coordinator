@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 import fsspec
 import nomad
 
-from extract_wbd_geometries import extract_geometry_by_huc, clear_wbd_client_cache
+from extract_wbd_geometries import clear_wbd_client_cache, extract_geometry_by_huc
 
 
 def submit_pipeline_job(
@@ -42,13 +42,15 @@ def submit_pipeline_job(
         "nomad_token": nomad_token or os.environ.get("NOMAD_TOKEN", ""),
         "registry_token": os.environ.get("REGISTRY_TOKEN", ""),
     }
-    
+
     # Include AWS credentials from environment if using local creds
     if use_local_creds:
-        meta.update({
-            "aws_access_key": os.environ.get("AWS_ACCESS_KEY_ID", ""),
-            "aws_secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
-        })
+        meta.update(
+            {
+                "aws_access_key": os.environ.get("AWS_ACCESS_KEY_ID", ""),
+                "aws_secret_key": os.environ.get("AWS_SECRET_ACCESS_KEY", ""),
+            }
+        )
 
     try:
         result = nomad_client.job.dispatch_job(
@@ -79,15 +81,13 @@ def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
             job_status = job.get("Status", "")
             # Debug logging to see actual job statuses
             logging.debug(f"Pipeline job {job.get('ID', 'unknown')}: Status={job_status}")
-            
+
             # Count jobs that are not finished (dead = finished)
             # "running" includes both allocated jobs and dispatched jobs waiting for allocation
             if job_status != "dead":
                 running_count += 1
 
-        logging.debug(
-            f"Found {running_count} active pipeline jobs out of {len(pipeline_jobs)} total pipeline jobs"
-        )
+        logging.debug(f"Found {running_count} active pipeline jobs out of {len(pipeline_jobs)} total pipeline jobs")
         return running_count
     except Exception as e:
         logging.warning(f"Failed to get running job count: {e}")
@@ -123,7 +123,7 @@ def extract_hucs(huc_codes: List[str], temp_dir: Path) -> Dict[str, Path]:
 
     # Clear WBD client cache to free resources after all extractions
     clear_wbd_client_cache()
-    
+
     return huc_files
 
 
@@ -160,11 +160,10 @@ def main():
         "--nomad_namespace", default=os.environ.get("NOMAD_NAMESPACE", "default"), help="Nomad namespace"
     )
     parser.add_argument("--nomad_token", default=os.environ.get("NOMAD_TOKEN"), help="Nomad ACL token")
-    
+
     # AWS authentication arguments
     parser.add_argument(
-        "--use-local-creds", action="store_true",
-        help="Use AWS credentials from shell environment instead of IAM roles"
+        "--use-local-creds", action="store_true", help="Use AWS credentials from shell environment instead of IAM roles"
     )
 
     args = parser.parse_args()
@@ -242,7 +241,7 @@ def main():
                     break
                 wait_time = max(args.wait_seconds, 10)  # Minimum 10 seconds to avoid hammering the API
                 logging.info(
-                    f"Maximum pipeline limit ({args.max_pipelines}) reached. Current jobs: {current_jobs}. Waiting {wait_time} seconds..."
+                    f"Maximum pipeline limit ({args.max_pipelines}) reached. Current jobs: {current_jobs-1}. Waiting {wait_time} seconds..."  # current jobs is current chiled jobs so have to subtract 1 for parent
                 )
                 time.sleep(wait_time)
 
@@ -297,11 +296,11 @@ def main():
         while True:
             current_jobs = get_running_pipeline_jobs(nomad_client)
             logging.info(f"Currently running pipeline jobs: {current_jobs}")
-            
+
             if current_jobs <= 1:  # Only the parameterized job template should remain
                 logging.info("All submitted jobs have completed!")
                 break
-            
+
             # Wait before checking again
             time.sleep(60)  # Check every minute
 
