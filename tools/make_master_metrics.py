@@ -91,12 +91,12 @@ def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolutio
 
     for huc_code, huc_path in huc_dirs:
         if huc_path.startswith("s3://"):
-            agg_metrics_path = f"{huc_path.rstrip('/')}/agg_metrics.csv"
+            agg_metrics_path = f"{huc_path.rstrip('/')}/{huc_code}__agg_metrics.csv"
         elif output_root.startswith("s3://"):
             # Handle case where huc_path doesn't have s3:// prefix but output_root does
-            agg_metrics_path = f"s3://{huc_path.rstrip('/')}/agg_metrics.csv"
+            agg_metrics_path = f"s3://{huc_path.rstrip('/')}/{huc_code}__agg_metrics.csv"
         else:
-            agg_metrics_path = str(Path(huc_path) / "agg_metrics.csv")
+            agg_metrics_path = str(Path(huc_path) / f"{huc_code}__agg_metrics.csv")
 
         df = read_agg_metrics(agg_metrics_path)
 

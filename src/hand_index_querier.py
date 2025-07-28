@@ -32,7 +32,7 @@ class HandIndexQuerier:
         self.overlap_threshold_percent = overlap_threshold_percent
         self.con = None
         self.credentials = boto3.Session().get_credentials()
-        self.s3_region = boto3.Session.region_name
+        self.s3_region = boto3.Session().region_name
 
     def _ensure_connection(self):
         """Ensure DuckDB connection is established with required extensions."""
@@ -47,6 +47,7 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
+                # Might need to add the below back in when switch back to using IAM when nomad server role gets s3 bucket permissions
                 self.con.execute(f"SET s3_region = '{self.s3_region}';")
                 self.con.execute(f"SET s3_access_key_id='{self.credentials.access_key}';")
                 self.con.execute(f"SET s3_secret_access_key='{self.credentials.secret_key}';")

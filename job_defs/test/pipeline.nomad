@@ -23,9 +23,19 @@ job "pipeline" {
   }
 
   group "pipeline-coordinator" {
+    reschedule {
+      attempts = 10
+      interval = "24h"
+      delay = "3m"
+      delay_function = "constant"
+      unlimited = false
+    }
+
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 4        # Try 4 times on the same node
+      interval = "10m"    # Within a 10 minute window
+      delay    = "45s"    # Wait 45s between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "coordinator" {
@@ -49,6 +59,16 @@ job "pipeline" {
           "--benchmark_sources", "${NOMAD_META_benchmark_sources}",
           "--tags", "${NOMAD_META_tags}",
         ]
+
+        logging {
+          type = "awslogs"
+          config {
+            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
+            awslogs-region       = "us-east-1"
+            awslogs-stream       = "${NOMAD_JOB_ID}"
+            awslogs-create-group = "true"
+          }
+        }
       }
 
       env {
@@ -58,9 +78,9 @@ job "pipeline" {
         # AWS Configuration
         # Test nomad clients can use IAM
         AWS_DEFAULT_REGION    = "us-east-1"      
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
 
         # Nomad Configuration
         NOMAD_ADDRESS         = "http://nomad-server-test.test.nextgenwaterprediction.com:4646/"

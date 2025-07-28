@@ -5,13 +5,15 @@ from typing import Any, Dict, List, Optional
 import fsspec
 import pandas as pd
 
+from pipeline_utils import PathFactory
+
 logger = logging.getLogger(__name__)
 
 
 class MetricsAggregator:
     """Aggregates metrics.csv files from different scenarios into a single agg_metrics.csv file."""
 
-    def __init__(self, outputs_path: str, stac_results: Dict[str, Dict[str, Dict[str, List[str]]]], data_service, flow_scenarios: Optional[Dict[str, Dict[str, str]]] = None):
+    def __init__(self, outputs_path: str, stac_results: Dict[str, Dict[str, Dict[str, List[str]]]], data_service, flow_scenarios: Optional[Dict[str, Dict[str, str]]] = None, aoi_name: Optional[str] = None):
         """
         Initialize the MetricsAggregator.
 
@@ -20,11 +22,18 @@ class MetricsAggregator:
             stac_results: Results from StacQuerier.query_stac_for_polygon containing STAC item IDs
             data_service: DataService instance for file operations
             flow_scenarios: Mapping of collection -> scenario -> flowfile path
+            aoi_name: AOI name for generating correct S3 flowfile paths
         """
         self.outputs_path = outputs_path
         self.stac_results = stac_results
         self.data_service = data_service
         self.flow_scenarios = flow_scenarios or {}
+        
+        # Create PathFactory to generate correct S3 flowfile paths
+        if aoi_name:
+            self.path_factory = PathFactory(None, outputs_path, aoi_name)
+        else:
+            self.path_factory = None
 
     def aggregate_metrics(self) -> pd.DataFrame:
         """
@@ -91,8 +100,13 @@ class MetricsAggregator:
                 )  # Join STAC items into semicolon-separated string
                 metrics_df["scenario"] = scenario_name
                 
-                # Add flow column with flowfile URI
-                flow_uri = self.flow_scenarios.get(collection_name, {}).get(scenario_name, "")
+                # Add flow column with flowfile S3 URI
+                if self.path_factory:
+                    # Generate the correct S3 path using PathFactory
+                    flow_uri = self.path_factory.flowfile_path(collection_name, scenario_name)
+                else:
+                    # Fall back to the original flow_scenarios mapping (temp paths)
+                    flow_uri = self.flow_scenarios.get(collection_name, {}).get(scenario_name, "")
                 metrics_df["flow"] = flow_uri
                 
                 # Add nws_lid column with gauge information

@@ -7,6 +7,9 @@ from pathlib import Path
 import geopandas as gpd
 from pygeohydro import WBD  # client to pull WBD geometries
 
+# Global cache for WBD clients to reduce DNS resolver channel creation
+_wbd_clients = {}
+
 
 def extract_geometry_by_huc(huc_code: str) -> gpd.GeoDataFrame:
     """
@@ -36,7 +39,11 @@ def extract_geometry_by_huc(huc_code: str) -> gpd.GeoDataFrame:
         raise ValueError(f"Invalid HUC code length: {huc_len}")
     
     layer = layer_map[huc_len]
-    client = WBD(layer=layer)  # initialize the WBD client with appropriate layer
+    
+    # Get or create cached WBD client for this layer
+    if layer not in _wbd_clients:
+        _wbd_clients[layer] = WBD(layer=layer)
+    client = _wbd_clients[layer]
     
     # Query for the specific HUC using byids
     gdf = client.byids(f"huc{huc_len}", [huc_code])
@@ -49,6 +56,12 @@ def extract_geometry_by_huc(huc_code: str) -> gpd.GeoDataFrame:
         gdf = gdf.to_crs(4326)
 
     return gdf
+
+
+def clear_wbd_client_cache():
+    """Clear the cached WBD clients to free resources."""
+    global _wbd_clients
+    _wbd_clients.clear()
 
 
 def main():
@@ -82,6 +95,9 @@ def main():
             fail += 1
 
     logging.info(f"Done: {success} succeeded, {fail} failed ({len(hucs)} total).")
+    
+    # Clear client cache to free resources
+    clear_wbd_client_cache()
 
 
 if __name__ == "__main__":

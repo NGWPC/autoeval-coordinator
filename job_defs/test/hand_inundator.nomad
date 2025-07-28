@@ -24,10 +24,15 @@ job "hand_inundator" {
   }
 
   group "inundator-processor" {
-    # Don't attempt restart since don't want to retry on most errors
+    reschedule {
+      attempts = 0 # this needs to only be 0 re-attempts or will mess up pipeline job tracking
+    }
+
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 4        # Try 4 times on the same node
+      interval = "10m"    # Within a 10 minute window
+      delay    = "45s"    # Wait 45s between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "processor" {
@@ -64,9 +69,9 @@ job "hand_inundator" {
 
       env {
         AWS_DEFAULT_REGION = "us-east-1"
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
 
         GDAL_CACHEMAX         = "1024"
         

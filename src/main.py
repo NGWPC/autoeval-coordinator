@@ -215,6 +215,7 @@ class PolygonPipeline:
                         stac_results=self.stac_results,
                         data_service=self.data_svc,
                         flow_scenarios=self.flow_scenarios,
+                        aoi_name=self.path_factory.aoi_name,
                     )
                     metrics_path = aggregator.save_results(self.path_factory.results_path())
                     logger.info(f"Metrics aggregation completed: {metrics_path}")

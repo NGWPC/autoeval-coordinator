@@ -9,6 +9,7 @@ from io import StringIO
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import boto3
 import fsspec
 import geopandas as gpd
 from botocore.exceptions import ClientError, NoCredentialsError
@@ -25,7 +26,8 @@ class DataService:
 
     def __init__(self, config: AppConfig, hand_index_path: str, benchmark_collections: Optional[List[str]] = None):
         self.config = config
-        # Configure S3 filesystem options from environment
+        
+        # Configure S3 filesystem options - try config first, then IAM credentials
         self._s3_options = {}
         if config.aws.AWS_ACCESS_KEY_ID:
             self._s3_options["key"] = config.aws.AWS_ACCESS_KEY_ID
@@ -33,6 +35,21 @@ class DataService:
             self._s3_options["secret"] = config.aws.AWS_SECRET_ACCESS_KEY
         if config.aws.AWS_SESSION_TOKEN:
             self._s3_options["token"] = config.aws.AWS_SESSION_TOKEN
+            
+        # If no explicit credentials in config, try to get from IAM instance profile
+        if not self._s3_options:
+            try:
+                credentials = boto3.Session().get_credentials()
+                if credentials:
+                    self._s3_options["key"] = credentials.access_key
+                    self._s3_options["secret"] = credentials.secret_key
+                    if credentials.token:
+                        self._s3_options["token"] = credentials.token
+                    logging.info("Using IAM instance profile credentials for S3 access")
+                else:
+                    logging.warning("No AWS credentials found in config or IAM instance profile")
+            except Exception as e:
+                logging.warning(f"Failed to get IAM credentials: {e}")
 
         # Initialize HandIndexQuerier with provided path
         self.hand_querier = None
@@ -267,15 +284,11 @@ class DataService:
 
     def _sync_copy_file(self, source_path: str, dest_uri: str):
         """Synchronous helper for copying files using fsspec."""
-        # Create filesystem based on destination URI
-        if dest_uri.startswith("s3://"):
-            fs = fsspec.filesystem("s3", **self._s3_options)
-        else:
-            fs = fsspec.filesystem("file")
-
-        # Copy file using fsspec
+        # Copy file using fsspec.open directly (allows fallback to default AWS credentials)
         with open(source_path, "rb") as src:
-            with fs.open(dest_uri, "wb") as dst:
+            with fsspec.open(
+                dest_uri, "wb", **self._s3_options if dest_uri.startswith("s3://") else {}
+            ) as dst:
                 dst.write(src.read())
 
     async def check_file_exists(self, uri: str) -> bool:
@@ -366,15 +379,15 @@ class DataService:
         try:
             if base_path.startswith("s3://"):
                 fs = fsspec.filesystem("s3", **self._s3_options)
-                # Use glob to find all metrics.csv files recursively
-                pattern = f"{base_path.rstrip('/')}/*/*/metrics.csv"
+                # Use glob to find all metrics.csv files recursively (including tagged versions)
+                pattern = f"{base_path.rstrip('/')}/**/*__metrics.csv"
                 metrics_files = fs.glob(pattern)
                 # Add s3:// prefix back since glob strips it
                 metrics_files = [f"s3://{path}" for path in metrics_files]
             else:
                 base_path_obj = Path(base_path)
                 if base_path_obj.exists():
-                    metrics_files = [str(p) for p in base_path_obj.glob("*/*/metrics.csv")]
+                    metrics_files = [str(p) for p in base_path_obj.glob("**/*__metrics.csv")]
 
             logging.info(f"Found {len(metrics_files)} metrics.csv files in {base_path}")
             return metrics_files

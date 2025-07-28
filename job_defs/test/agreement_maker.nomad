@@ -21,10 +21,15 @@ job "agreement_maker" {
   }
 
   group "agreement-processor" {
-    # Don't attempt restart since don't want to retry on most errors
+    reschedule {
+      attempts = 0 # this needs to only be 0 re-attempts or will mess up pipeline job tracking
+    }
+
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 4        # Try 4 times on the same node
+      interval = "10m"    # Within a 10 minute window
+      delay    = "45s"    # Wait 45s between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "processor" {
@@ -49,12 +54,21 @@ job "agreement_maker" {
           "--mask_dict", "s3://fimc-data/autoeval/test_data/mask_areas.json",
         ]
 
+        logging {
+          type = "awslogs"
+          config {
+            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
+            awslogs-region       = "us-east-1"
+            awslogs-stream       = "${NOMAD_JOB_ID}"
+            awslogs-create-group = "true"
+          }
+        }
       }
 
       env {
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
         GDAL_CACHEMAX         = "1024"
         
@@ -85,7 +99,7 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 12000 # Higher memory for large raster processing
+        memory = 8000 # Higher memory for large raster processing
       }
 
       logs {

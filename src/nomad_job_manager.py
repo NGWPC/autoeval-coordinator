@@ -141,7 +141,9 @@ class NomadJobManager:
         Returns:
             Tuple of (job_id, exit_code)
         """
-        job_id = await self._dispatch_job(job_name, prefix, meta)
+        # Replace colons with hyphens in prefix to avoid issues with job dispatch strings
+        clean_prefix = prefix.replace(":", "-")
+        job_id = await self._dispatch_job(job_name, clean_prefix, meta)
 
         tracker = JobTracker(
             job_id=job_id,
