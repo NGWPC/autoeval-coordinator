@@ -55,7 +55,9 @@ class PolygonPipeline:
         # Store tags dict directly - pipeline stages will create tag strings as needed
         self.tmp = tempfile.TemporaryDirectory(prefix="pipeline-", dir=temp_dir)
 
-        self.path_factory = PathFactory(config, outputs_path)
+        # Get aoi_name from tags for the PathFactory
+        aoi_name = self.tags["aoi_name"]  # Required tag, will always exist
+        self.path_factory = PathFactory(config, outputs_path, aoi_name)
 
         # Populated by initialize()
         self.catchments: Dict[str, Dict[str, Any]] = {}
