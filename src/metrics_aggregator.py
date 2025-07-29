@@ -274,8 +274,10 @@ class MetricsAggregator:
         ascending = [True] * len(metrics_cols) + [False, False]
         combined = combined.sort_values(by=sort_cols, ascending=ascending)
 
-        # Drop duplicates on metrics columns, keeping the first (best) row
-        final_df = combined.drop_duplicates(subset=metrics_cols, keep="first")
+        # Drop duplicates on key metadata + metrics columns, keeping the first (best) row
+        # Include collection_id and scenario as key identifiers to prevent near-duplicates
+        key_cols = ["collection_id", "scenario"] + metrics_cols
+        final_df = combined.drop_duplicates(subset=key_cols, keep="first")
 
         # Clean up temporary columns
         final_df = final_df.drop(columns=["_source", "_meta_count", "_is_new"])
