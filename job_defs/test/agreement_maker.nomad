@@ -37,7 +37,8 @@ job "agreement_maker" {
 
       config {
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
-        force_pull = false # use a cached image on client if available. To force a pull need to change image name while debugging
+        # force_pull = false
+        force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
 
         auth {
           username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
