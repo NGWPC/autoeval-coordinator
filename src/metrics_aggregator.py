@@ -241,7 +241,7 @@ class MetricsAggregator:
     def _merge_dataframes(self, existing_df: pd.DataFrame, new_df: pd.DataFrame) -> pd.DataFrame:
         """
         Merge existing and new dataframes using vectorized operations.
-        For rows with identical metrics, keep the one with more complete metadata.
+        For rows with nearly identical metrics, keep the one with more complete metadata.
         """
         # Define metadata columns
         meta_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"]
@@ -263,24 +263,31 @@ class MetricsAggregator:
 
         combined = pd.concat([existing_df, new_df], ignore_index=True)
 
+        # Define the precision for rounding floating-point metrics
+        rounding_precision = 5
+
+        # Create temporary columns with rounded metrics for duplicate detection
+        rounded_metric_cols = [f"{col}_rounded" for col in metrics_cols]
+        for i, col in enumerate(metrics_cols):
+            combined[rounded_metric_cols[i]] = combined[col].round(rounding_precision)
+
         # Count non-null, non-empty metadata for each row
         combined["_meta_count"] = combined[meta_cols].notna().sum(axis=1) - (combined[meta_cols] == "").sum(axis=1)
 
         # Prefer new on ties
         combined["_is_new"] = (combined["_source"] == "new").astype(int)
 
-        # Sort so best row per metrics key comes first
-        sort_cols = metrics_cols + ["_meta_count", "_is_new"]
-        ascending = [True] * len(metrics_cols) + [False, False]
+        # Sort so best row per metrics key comes first, using the rounded metrics for sorting
+        sort_cols = rounded_metric_cols + ["_meta_count", "_is_new"]
+        ascending = [True] * len(rounded_metric_cols) + [False, False]
         combined = combined.sort_values(by=sort_cols, ascending=ascending)
 
-        # Drop duplicates on key metadata + metrics columns, keeping the first (best) row
-        # Include collection_id and scenario as key identifiers to prevent near-duplicates
-        key_cols = ["collection_id", "scenario"] + metrics_cols
+        # Drop duplicates on key metadata + rounded metrics columns, keeping the first (best) row
+        key_cols = ["collection_id", "scenario"] + rounded_metric_cols
         final_df = combined.drop_duplicates(subset=key_cols, keep="first")
 
         # Clean up temporary columns
-        final_df = final_df.drop(columns=["_source", "_meta_count", "_is_new"])
+        final_df = final_df.drop(columns=["_source", "_meta_count", "_is_new"] + rounded_metric_cols)
 
         rows_removed = len(existing_df) + len(new_df) - len(final_df)
         logger.info(f"Merged dataframes: removed {rows_removed} duplicate rows based on metrics")
