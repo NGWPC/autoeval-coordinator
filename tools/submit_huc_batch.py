@@ -295,7 +295,7 @@ def main():
         logging.info("\nMonitoring job completion...")
         while True:
             current_jobs = get_running_pipeline_jobs(nomad_client)
-            logging.info(f"Currently running pipeline jobs: {current_jobs}")
+            logging.info(f"Currently running pipeline jobs: {current_jobs-1}")  # don't count the parent job
 
             if current_jobs <= 1:  # Only the parameterized job template should remain
                 logging.info("All submitted jobs have completed!")
