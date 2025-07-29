@@ -321,28 +321,9 @@ class StacQuerier:
                         if test(k, a) and a.href not in bucket[atype]:
                             bucket[atype].append(a.href)
 
-            # 2) BLE/NWS/USGS/Ripple asset‐level grouping
-            elif coll == "ble-collection" or coll.endswith("-fim-collection"):
-                # preload ripple assets once
-                if coll == "ripple-fim-collection" and not ripple_cache:
-                    try:
-                        col = item.get_collection()
-                        for ak, aa in col.assets.items():
-                            m = re.search(r"flows_(\d+)_yr_", ak)
-                            ri = f"{m.group(1)}yr" if m else None
-                            if ri and aa.media_type == "text/csv":
-                                logger.info(f"Caching Ripple flowfile for {ri}: {aa.href}")
-                                ripple_cache.setdefault(ri, []).append(aa.href)
-                    except Exception as e:
-                        logger.warning(f"Ripple cache failed: {e}")
-
-                specs = (
-                    self.BLE_SPEC
-                    if coll == "ble-collection"
-                    else self.RIPPLE_SPEC
-                    if coll == "ripple-fim-collection"
-                    else self.NWS_USGS_SPEC
-                )
+            # 2) BLE/NWS/USGS asset‐level grouping (excluding Ripple)
+            elif coll == "ble-collection" or coll in ["nws-fim-collection", "usgs-fim-collection"]:
+                specs = self.BLE_SPEC if coll == "ble-collection" else self.NWS_USGS_SPEC
 
                 found = set()
                 for k, a in item.assets.items():
@@ -365,16 +346,54 @@ class StacQuerier:
                             if gauge and gauge_info[collection_key][gid] is None:
                                 gauge_info[collection_key][gid] = gauge
 
-                # append ripple flowfiles
-                if coll == "ripple-fim-collection":
-                    for gid in found:
-                        if gid in ripple_cache:
-                            logger.info(f"Adding cached flowfiles for {gid}")
-                            for href in ripple_cache[gid]:
-                                if href not in results[collection_key][gid]["flowfiles"]:
-                                    results[collection_key][gid]["flowfiles"].append(href)
+            # 3) Ripple asset-level grouping with source-based separation
+            elif coll == "ripple-fim-collection":
+                # preload ripple assets once
+                if not ripple_cache:
+                    try:
+                        col = item.get_collection()
+                        for ak, aa in col.assets.items():
+                            m = re.search(r"flows_(\d+)_yr_", ak)
+                            ri = f"{m.group(1)}yr" if m else None
+                            if ri and aa.media_type == "text/csv":
+                                logger.info(f"Caching Ripple flowfile for {ri}: {aa.href}")
+                                ripple_cache.setdefault(ri, []).append(aa.href)
+                    except Exception as e:
+                        logger.warning(f"Ripple cache failed: {e}")
 
-            # 3) fallback
+                specs = self.RIPPLE_SPEC
+                source = item.properties.get("source", "unknown_source")
+
+                found = set()
+                for k, a in item.assets.items():
+                    if not a.href:
+                        continue
+                    for pat, gid_t, at_t in specs:
+                        m = pat.match(k)
+                        if not m:
+                            continue
+                        # Get the base ID (e.g., "100yr")
+                        base_gid = m.expand(gid_t) if "\\" in gid_t else gid_t
+                        # Create the new, unique group ID
+                        gid = f"{source}-{base_gid}"
+                        at = m.expand(at_t)
+                        bkt = results[collection_key][gid]
+                        item_ids[collection_key][gid].add(item.id)
+                        if a.href not in bkt[at]:
+                            bkt[at].append(a.href)
+                        found.add(gid)
+
+                # append ripple flowfiles
+                for composite_gid in found:
+                    # Extract "100yr" from "SourceA-100yr"
+                    base_gid = composite_gid.split("-", 1)[-1]
+                    if base_gid in ripple_cache:
+                        logger.info(f"Adding cached flowfiles for {composite_gid}")
+                        for href in ripple_cache[base_gid]:
+                            if href not in results[collection_key][composite_gid]["flowfiles"]:
+                                results[collection_key][composite_gid]["flowfiles"].append(href)
+
+            # 4) fallback
             else:
                 logger.warning(f"Unknown coll '{coll}'; grouping by item.id")
                 gid = item.id
@@ -528,7 +547,7 @@ class StacQuerier:
             logger.info(f"Searching collections {collections_msg}")
             search = self.client.search(**search_kw)
             items = list(search.items())  # Convert to list for geometry filtering
-            
+
             if not items:
                 logger.info("STAC query returned no items")
                 return {}
@@ -542,7 +561,7 @@ class StacQuerier:
                     return {}
 
             grouped = self._format_results(items)
-            
+
             if not grouped:
                 logger.info("No valid scenarios found after processing STAC items")
                 return {}
