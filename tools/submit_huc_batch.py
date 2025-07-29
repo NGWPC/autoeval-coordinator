@@ -52,9 +52,12 @@ def submit_pipeline_job(
             }
         )
 
+    # Create the id_prefix_template in the format [batch_name=value,aoi_name=value]
+    id_prefix_template = f"[batch_name={batch_name},aoi_name={huc_code}]"
+
     try:
         result = nomad_client.job.dispatch_job(
-            id_="pipeline", payload=None, meta=meta, id_prefix_template=f"{batch_name}-{huc_code}"
+            id_="pipeline", payload=None, meta=meta, id_prefix_template=id_prefix_template
         )
 
         return result["DispatchedJobID"]
