@@ -43,7 +43,7 @@ job "pipeline" {
 
       config {
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-coordinator-v0.1"
-        force_pull = true
+        force_pull = false # use a cached image on client if available. To force a pull need to change image name while debugging
         network_mode = "host"
         
         # Docker registry authentication
