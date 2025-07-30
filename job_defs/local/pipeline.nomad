@@ -21,6 +21,7 @@ job "pipeline" {
       "aws_secret_key", 
       "aws_session_token",
       "stac_datetime_filter", 
+      "nomad_token",     # Required for test environment dispatch never used here
       "tags",            # Space-separated list of key=value pairs
     ]
   }

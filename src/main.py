@@ -13,6 +13,7 @@ import aiohttp
 import fsspec
 import geopandas as gpd
 
+import default_config
 from data_service import DataService
 from load_config import AppConfig, load_config
 from metrics_aggregator import MetricsAggregator
@@ -121,6 +122,14 @@ class PolygonPipeline:
                     scenario_name=scenario,
                     flowfile_path=flowfile_path,
                     benchmark_rasters=benchmark_rasters,
+                    metadata={
+                        "autoeval_coordinator_version": default_config.AUTOEVAL_COORDINATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.HAND_INUNDATOR_VERSION,
+                        "hand_inundator_version": default_config.FIM_MOSAICKER_VERSION,
+                        "batch_name": self.tags.get("batch_name", ""),
+                        "aoi_name": self.tags.get("aoi_name", ""),
+                    },
                 )
                 results.append(result)
 
@@ -143,6 +152,38 @@ class PolygonPipeline:
             results = await agreement_stage.run(results)
 
             if results:
+                try:
+                    results_json_path = self.path_factory.results_json_path()
+                    # Convert results to serializable format
+                    serializable_results = []
+                    for result in results:
+                        result_dict = {
+                            "scenario_id": result.scenario_id,
+                            "collection_name": result.collection_name,
+                            "scenario_name": result.scenario_name,
+                            "flowfile_path": result.flowfile_path,
+                            "benchmark_rasters": result.benchmark_rasters,
+                            "status": result.status,
+                            "paths": result.paths,
+                            "metadata": result.metadata,
+                            "error": result.error,
+                        }
+                        serializable_results.append(result_dict)
+
+                    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as temp_file:
+                        json.dump(serializable_results, temp_file, indent=2)
+                        temp_json_path = temp_file.name
+
+                    await self.data_svc.copy_file_to_uri(temp_json_path, results_json_path)
+                    logger.info(f"Results JSON written to {results_json_path}")
+
+                    if os.path.exists(temp_json_path):
+                        os.unlink(temp_json_path)
+
+                except Exception as e:
+                    logger.error(f"Failed to write results JSON: {e}")
+
+            if results:
                 logger.info("Running metrics aggregation...")
                 try:
                     aggregator = MetricsAggregator(
@@ -150,15 +191,15 @@ class PolygonPipeline:
                         stac_results=self.stac_results,
                         data_service=self.data_svc,
                     )
-                    results_path = aggregator.save_results(self.path_factory.results_path())
-                    logger.info(f"Metrics aggregation completed: {results_path}")
+                    metrics_path = aggregator.save_results(self.path_factory.metrics_path())
+                    logger.info(f"Metrics aggregation completed: {metrics_path}")
                 except Exception as e:
                     logger.error(f"Metrics aggregation failed: {e}")
 
             successful_results = [r for r in results if r.status == "completed"]
             total_attempted = len([r for r in results if r.status != "pending"])
 
-            result = {
+            summary = {
                 "status": "success",
                 "catchment_count": len(self.catchments),
                 "total_scenarios_attempted": total_attempted,
@@ -166,7 +207,7 @@ class PolygonPipeline:
                 "message": f"Pipeline completed successfully with {len(successful_results)}/{total_attempted} scenarios",
             }
             logger.info(f"Pipeline SUCCESS: {len(successful_results)}/{total_attempted} scenarios completed")
-            return result
+            return summary
         except Exception as e:
             logger.error(f"Pipeline FAILED: {str(e)}")
             return {
@@ -337,11 +378,11 @@ if __name__ == "__main__":
             logging.info(f"Started pipeline run for {args.aoi} with outputs to {outputs_path}")
 
             try:
-                result = await pipeline.run()
+                summary = await pipeline.run()
 
                 logger.info("=" * 80)
                 logger.info("PIPELINE FINAL RESULTS:")
-                logger.info(json.dumps(result, indent=2))
+                logger.info(json.dumps(summary, indent=2))
                 logger.info("=" * 80)
 
                 file_handler.close()
@@ -351,7 +392,7 @@ if __name__ == "__main__":
                 await data_svc.copy_file_to_uri(temp_log_path, final_log_path)
                 logging.info(f"Logs written to {final_log_path}")
 
-                print(json.dumps(result, indent=2))
+                print(json.dumps(summary, indent=2))
             finally:
                 if os.path.exists(temp_log_path):
                     os.unlink(temp_log_path)

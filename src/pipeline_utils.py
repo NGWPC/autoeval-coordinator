@@ -92,8 +92,8 @@ class PathFactory:
         """Generate path for pipeline logs: base/{aoi}__logs.txt"""
         filename = f"{self.aoi_name}__logs.txt"
         return f"{self.base}/{filename}"
-
-    def results_path(self) -> str:
+    
+    def metrics_path(self) -> str:
         """Generate path for aggregated results: base/{aoi}__agg_metrics.csv"""
         filename = f"{self.aoi_name}__agg_metrics.csv"
         return f"{self.base}/{filename}"
