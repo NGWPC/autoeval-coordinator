@@ -26,7 +26,7 @@ class DataService:
 
     def __init__(self, config: AppConfig, hand_index_path: str, benchmark_collections: Optional[List[str]] = None):
         self.config = config
-        
+
         # Configure S3 filesystem options - try config first, then IAM credentials
         self._s3_options = {}
         if config.aws.AWS_ACCESS_KEY_ID:
@@ -35,7 +35,7 @@ class DataService:
             self._s3_options["secret"] = config.aws.AWS_SECRET_ACCESS_KEY
         if config.aws.AWS_SESSION_TOKEN:
             self._s3_options["token"] = config.aws.AWS_SESSION_TOKEN
-            
+
         # If no explicit credentials in config, try to get from IAM instance profile
         if not self._s3_options:
             try:
@@ -88,8 +88,7 @@ class DataService:
         """
         try:
             # geopandas can read from both local and S3 paths
-            # For S3 paths, it will use storage_options; for local paths, it ignores them
-            gdf = gpd.read_file(file_path, storage_options=self._s3_options if file_path.startswith("s3://") else None)
+            gdf = gpd.read_file(file_path)
 
             if len(gdf) == 0:
                 raise ValueError(f"Empty GeoDataFrame in file: {file_path}")
@@ -286,10 +285,56 @@ class DataService:
         """Synchronous helper for copying files using fsspec."""
         # Copy file using fsspec.open directly (allows fallback to default AWS credentials)
         with open(source_path, "rb") as src:
-            with fsspec.open(
-                dest_uri, "wb", **self._s3_options if dest_uri.startswith("s3://") else {}
-            ) as dst:
+            with fsspec.open(dest_uri, "wb", **self._s3_options if dest_uri.startswith("s3://") else {}) as dst:
                 dst.write(src.read())
+
+    async def append_file_to_uri(self, source_path: str, dest_uri: str):
+        """Appends a file to a URI (local or S3) using fsspec.
+        If the destination file doesn't exist, creates it with the source content.
+        If it exists, appends the source content to it."""
+
+        logging.debug(f"Appending file from {source_path} to {dest_uri}")
+        try:
+            # Check if destination exists
+            dest_exists = await self.check_file_exists(dest_uri)
+
+            # Run in executor for async operation
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self._sync_append_file,
+                source_path,
+                dest_uri,
+                dest_exists,
+            )
+            logging.info(f"Successfully {'appended to' if dest_exists else 'created'} {dest_uri}")
+            return dest_uri
+        except Exception as e:
+            logging.exception(f"Failed to append {source_path} to {dest_uri}")
+            raise ConnectionError(f"Failed to append file to {dest_uri}") from e
+
+    def _sync_append_file(self, source_path: str, dest_uri: str, dest_exists: bool):
+        """Synchronous helper for appending files using fsspec."""
+        # Read source content
+        with open(source_path, "rb") as src:
+            source_content = src.read()
+
+        if dest_exists:
+            # If destination exists, read existing content first
+            with fsspec.open(dest_uri, "rb", **self._s3_options if dest_uri.startswith("s3://") else {}) as dst:
+                existing_content = dst.read()
+
+            # Write combined content
+            with fsspec.open(dest_uri, "wb", **self._s3_options if dest_uri.startswith("s3://") else {}) as dst:
+                dst.write(existing_content)
+                dst.write(source_content)
+        else:
+            # If destination doesn't exist, just write the source content
+            if not dest_uri.startswith(("s3://", "http://", "https://")):
+                os.makedirs(os.path.dirname(dest_uri), exist_ok=True)
+
+            with fsspec.open(dest_uri, "wb", **self._s3_options if dest_uri.startswith("s3://") else {}) as dst:
+                dst.write(source_content)
 
     async def check_file_exists(self, uri: str) -> bool:
         """Check if a file exists (S3 or local).

@@ -415,7 +415,7 @@ if __name__ == "__main__":
                 root_logger.removeHandler(file_handler)
 
                 final_log_path = pipeline.path_factory.logs_path()
-                await data_svc.copy_file_to_uri(temp_log_path, final_log_path)
+                await data_svc.append_file_to_uri(temp_log_path, final_log_path)
                 logging.info(f"Logs written to {final_log_path}")
 
                 print(json.dumps(summary, indent=2))
