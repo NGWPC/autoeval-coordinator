@@ -281,6 +281,12 @@
                 <div class="stat-value warning">{{ unhandled_exceptions_count }}</div>
                 <div class="stat-label">Unhandled Exceptions</div>
             </div>
+            {% if missing_aois_count is defined %}
+            <div class="stat-card">
+                <div class="stat-value error">{{ missing_aois_count }}</div>
+                <div class="stat-label">Missing AOIs</div>
+            </div>
+            {% endif %}
             {% if missing_metrics_count is defined %}
             <div class="stat-card">
                 <div class="stat-value warning">{{ missing_metrics_count }}</div>
@@ -300,6 +306,9 @@
         <div class="tabs">
             <button class="tab active" onclick="showTab('failed-jobs')">Failed Jobs</button>
             <button class="tab" onclick="showTab('exceptions')">Unhandled Exceptions</button>
+            {% if missing_aois_count is defined %}
+            <button class="tab" onclick="showTab('missing-aois')">Missing AOIs</button>
+            {% endif %}
             {% if missing_metrics_count is defined %}
             <button class="tab" onclick="showTab('metrics')">Metrics Issues</button>
             {% endif %}
@@ -381,6 +390,45 @@
             <div class="no-data">No unhandled exceptions found 🎉</div>
             {% endif %}
         </div>
+
+        {% if missing_aois_count is defined %}
+        <div id="missing-aois" class="tab-content">
+            <h2 class="section-title">Missing AOIs Analysis</h2>
+            <div class="export-links">
+                <a href="missing_aois.csv" class="export-link">📥 Download CSV</a>
+            </div>
+            
+            {% if missing_aois|length > 0 %}
+            <div class="card">
+                <p class="card-description">
+                    The following AOIs were expected based on the input list but have no corresponding pipeline log streams.
+                    This indicates these pipelines were never submitted or failed to start.
+                </p>
+                
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>AOI ID</th>
+                                <th>Expected Log Stream Pattern</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for aoi_id in missing_aois %}
+                            <tr>
+                                <td><code>{{ aoi_id }}</code></td>
+                                <td><code>pipeline/dispatch-[batch_name={{ batch_name }},aoi_name={{ aoi_id }}]</code></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            {% else %}
+            <div class="no-data">All expected AOIs have corresponding pipeline logs 🎉</div>
+            {% endif %}
+        </div>
+        {% endif %}
 
         {% if missing_metrics_count is defined %}
         <div id="metrics" class="tab-content">
@@ -485,6 +533,9 @@
                 <p><strong>Pipelines Submitted:</strong> {{ submitted_pipelines_count }}</p>
                 <p><strong>Failed Jobs:</strong> {{ failed_jobs_count }}</p>
                 <p><strong>Unhandled Exceptions:</strong> {{ unhandled_exceptions_count }}</p>
+                {% if missing_aois_count is defined %}
+                <p><strong>Missing AOIs (no logs):</strong> {{ missing_aois_count }}</p>
+                {% endif %}
                 {% if missing_metrics_count is defined %}
                 <p><strong>Missing Metrics Files:</strong> {{ missing_metrics_count }}</p>
                 <p><strong>Invalid Metrics Files:</strong> {{ empty_metrics_count }}</p>

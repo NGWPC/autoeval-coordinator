@@ -15,6 +15,7 @@ class DebugConfig:
     job_log_group: str
     s3_output_root: Optional[str] = None
     generate_html: bool = False
+    aoi_list_path: Optional[str] = None
 
 
 @dataclass

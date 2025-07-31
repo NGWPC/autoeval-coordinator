@@ -37,8 +37,8 @@ job "agreement_maker" {
 
       config {
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
-        # force_pull = false
-        force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
+        force_pull = false
+        # force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
 
         auth {
           username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
@@ -83,7 +83,7 @@ job "agreement_maker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Processing Configuration
-        DASK_CLUST_MAX_MEM = "12GB"
+        DASK_CLUST_MAX_MEM = "8GB"
         RASTERIO_CHUNK_SIZE = "4096"
         DEFAULT_WRITE_BLOCK_SIZE = "4096"
         COG_BLOCKSIZE = "512"

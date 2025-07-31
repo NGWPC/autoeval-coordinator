@@ -1,6 +1,7 @@
 """CloudWatch Logs analysis for pipeline debugging."""
 
 import logging
+import re
 import time
 from typing import Dict, List, Set
 
@@ -182,6 +183,34 @@ class CloudWatchAnalyzer:
 
         logger.info(f"Found {len(submitted_streams)} submitted pipeline streams")
         return submitted_streams
+
+    def find_missing_pipelines(self, expected_aois: List[str]) -> List[str]:
+        """Find AOIs that were expected but have no corresponding pipeline log streams."""
+        logger.info(f"Checking for missing pipelines from {len(expected_aois)} expected AOIs...")
+        
+        # Get all submitted pipeline streams
+        submitted_streams = self.find_submitted_pipelines()
+        
+        # Extract AOI names from log stream names
+        # Pattern: pipeline/dispatch-[batch_name=X,aoi_name=Y]
+        pattern = r'pipeline/dispatch-\[batch_name=' + re.escape(self.config.batch_name) + r',aoi_name=([^\]]+)\]'
+        
+        actual_aois = set()
+        for stream in submitted_streams:
+            match = re.search(pattern, stream)
+            if match:
+                aoi_name = match.group(1)
+                actual_aois.add(aoi_name)
+        
+        # Find missing AOIs
+        expected_aois_set = set(expected_aois)
+        missing_aois = expected_aois_set - actual_aois
+        
+        logger.info(f"Expected AOIs: {len(expected_aois_set)}")
+        logger.info(f"Found AOIs with logs: {len(actual_aois)}")
+        logger.info(f"Missing AOIs: {len(missing_aois)}")
+        
+        return sorted(list(missing_aois))
 
     def _get_field_value(self, result: Dict, field_name: str, default: str = "N/A") -> str:
         """Extract field value from CloudWatch Logs Insights result."""

@@ -33,6 +33,7 @@ class HTMLGenerator:
         missing_metrics: List[Dict] = None,
         empty_metrics: List[Dict] = None,
         missing_agg_metrics: List[Dict] = None,
+        missing_aois: List[str] = None,
     ) -> str:
         """Generate HTML dashboard from analysis results."""
         
@@ -60,6 +61,13 @@ class HTMLGenerator:
                 'missing_metrics': missing_metrics or [],
                 'empty_metrics': empty_metrics or [],
                 'missing_agg_metrics': missing_agg_metrics or [],
+            })
+        
+        # Add missing AOIs data if available
+        if missing_aois is not None:
+            context.update({
+                'missing_aois_count': analysis_results.get('missing_aois_count', 0),
+                'missing_aois': missing_aois or [],
             })
         
         # Render template

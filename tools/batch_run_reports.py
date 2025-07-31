@@ -28,6 +28,7 @@ def main():
     )
     parser.add_argument("--s3_output_root", help="S3 root path for pipeline outputs (for metrics analysis)")
     parser.add_argument("--html", action="store_true", help="Generate HTML dashboard in addition to CSV reports")
+    parser.add_argument("--aoi_list", help="Path to AOI list file (same format as used by submit_stac_batch.py) for missing pipeline detection")
 
     args = parser.parse_args()
 
@@ -44,6 +45,7 @@ def main():
         job_log_group=args.job_log_group,
         s3_output_root=args.s3_output_root,
         generate_html=args.html,
+        aoi_list_path=args.aoi_list,
     )
 
     try:
@@ -57,6 +59,9 @@ def main():
         print(f"Failed jobs: {results['failed_jobs_count']}")
         print(f"Unhandled exceptions: {results['unhandled_exceptions_count']}")
         print(f"Submitted pipelines: {results['submitted_pipelines_count']}")
+
+        if "missing_aois_count" in results:
+            print(f"Missing AOIs (no logs): {results['missing_aois_count']}")
 
         if "missing_metrics_count" in results:
             print(f"Missing metrics files: {results['missing_metrics_count']}")

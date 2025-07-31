@@ -44,6 +44,25 @@ class BatchRunAnalyzer:
         results["unhandled_exceptions_count"] = len(unhandled_exceptions)
         results["submitted_pipelines_count"] = len(submitted_pipelines)
 
+        # AOI list comparison (if provided)
+        missing_aois = []
+        if self.config.aoi_list_path:
+            logger.info("=== AOI List Comparison ===")
+            try:
+                # Read expected AOIs from file
+                with open(self.config.aoi_list_path, 'r') as f:
+                    expected_aois = [line.strip() for line in f if line.strip()]
+                
+                logger.info(f"Loaded {len(expected_aois)} expected AOIs from {self.config.aoi_list_path}")
+                
+                # Find missing AOIs
+                missing_aois = self.cloudwatch.find_missing_pipelines(expected_aois)
+                results["missing_aois_count"] = len(missing_aois)
+                
+            except Exception as e:
+                logger.error(f"Failed to process AOI list: {e}")
+                results["missing_aois_count"] = 0
+
         # Generate CloudWatch reports
         if failed_jobs:
             report_file = self.report_generator.generate_failed_jobs_report(failed_jobs)
@@ -51,6 +70,11 @@ class BatchRunAnalyzer:
 
         if unhandled_exceptions:
             report_file = self.report_generator.generate_unhandled_exceptions_report(unhandled_exceptions)
+            results["reports_generated"].append(report_file)
+
+        # Generate missing AOIs report
+        if missing_aois:
+            report_file = self.report_generator.generate_missing_aois_report(missing_aois, self.config.batch_name)
             results["reports_generated"].append(report_file)
 
         # S3 metrics analysis
@@ -88,6 +112,7 @@ class BatchRunAnalyzer:
                 missing_metrics if self.s3_analyzer else None,
                 empty_metrics if self.s3_analyzer else None,
                 missing_agg if self.s3_analyzer else None,
+                missing_aois if missing_aois else None,
             )
             results["reports_generated"].append(html_file)
 
