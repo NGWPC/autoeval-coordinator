@@ -83,6 +83,22 @@ for resolution in "${RESOLUTIONS[@]}"; do
         fi
     fi
     
+    # Generate batch analysis reports
+    echo "--- Generating Batch Reports for ${resolution}m ---"
+    reports_output_dir="../reports/$batch_name"
+    reports_cmd="python tools/batch_run_reports.py --batch_name $batch_name --output_dir $reports_output_dir --pipeline_log_group /aws/ec2/nomad-client-linux-test --job_log_group /aws/ec2/nomad-client-linux-test --s3_output_root $output_root --html"
+    
+    if confirm_command "$reports_cmd"; then
+        echo "Executing batch_run_reports.py..."
+        eval $reports_cmd
+        if [[ $? -ne 0 ]]; then
+            echo "Warning: batch_run_reports.py failed for ${resolution}m"
+        else
+            echo "Reports generated at: $reports_output_dir"
+            echo "View dashboard: $reports_output_dir/batch_analysis_dashboard.html"
+        fi
+    fi
+    
     echo "--- Purging Dispatch Jobs for ${resolution}m ---"
     purge_cmd="python tools/purge_dispatch_jobs.py"
     

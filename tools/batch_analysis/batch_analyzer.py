@@ -1,0 +1,99 @@
+"""Main orchestrator for batch run analysis."""
+
+import logging
+import time
+from typing import Any, Dict
+
+from .cloudwatch_analyzer import CloudWatchAnalyzer
+from .html_generator import HTMLGenerator
+from .models import DebugConfig
+from .report_generator import ReportGenerator
+from .s3_analyzer import S3MetricsAnalyzer
+
+logger = logging.getLogger(__name__)
+
+
+class BatchRunAnalyzer:
+    """Main orchestrator for batch run analysis."""
+
+    def __init__(self, config: DebugConfig):
+        self.config = config
+        self.cloudwatch = CloudWatchAnalyzer(config)
+        self.s3_analyzer = S3MetricsAnalyzer(config) if config.s3_output_root else None
+        self.report_generator = ReportGenerator(config.output_dir)
+        self.html_generator = HTMLGenerator(config.output_dir) if config.generate_html else None
+
+    def run_analysis(self) -> Dict[str, Any]:
+        """Run complete batch run analysis."""
+        logger.info(f"Starting batch run analysis for batch: {self.config.batch_name}")
+
+        results = {
+            "batch_name": self.config.batch_name,
+            "time_range_days": self.config.time_range_days,
+            "analysis_timestamp": time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime()),
+            "reports_generated": [],
+        }
+
+        # CloudWatch analysis
+        logger.info("=== CloudWatch Analysis ===")
+        failed_jobs = self.cloudwatch.find_failed_jobs()
+        unhandled_exceptions = self.cloudwatch.find_unhandled_exceptions()
+        submitted_pipelines = self.cloudwatch.find_submitted_pipelines()
+
+        results["failed_jobs_count"] = len(failed_jobs)
+        results["unhandled_exceptions_count"] = len(unhandled_exceptions)
+        results["submitted_pipelines_count"] = len(submitted_pipelines)
+
+        # Generate CloudWatch reports
+        if failed_jobs:
+            report_file = self.report_generator.generate_failed_jobs_report(failed_jobs)
+            results["reports_generated"].append(report_file)
+
+        if unhandled_exceptions:
+            report_file = self.report_generator.generate_unhandled_exceptions_report(unhandled_exceptions)
+            results["reports_generated"].append(report_file)
+
+        # S3 metrics analysis
+        missing_metrics = []
+        empty_metrics = []
+        missing_agg = []
+        
+        if self.s3_analyzer:
+            logger.info("=== S3 Metrics Analysis ===")
+            missing_metrics = self.s3_analyzer.find_missing_metrics()
+            empty_metrics = self.s3_analyzer.find_empty_metrics()
+            missing_agg = self.s3_analyzer.find_missing_agg_metrics()
+
+            results["missing_metrics_count"] = len(missing_metrics)
+            results["empty_metrics_count"] = len(empty_metrics)
+            results["missing_agg_metrics_count"] = len(missing_agg)
+
+            # Generate metrics reports
+            metrics_reports = self.report_generator.generate_metrics_reports(
+                missing_metrics, empty_metrics, missing_agg
+            )
+            results["reports_generated"].extend(metrics_reports)
+
+        # Generate summary
+        summary_file = self.report_generator.generate_summary_report(results)
+        results["reports_generated"].append(summary_file)
+
+        # Generate HTML dashboard if requested
+        if self.html_generator:
+            logger.info("=== Generating HTML Dashboard ===")
+            html_file = self.html_generator.generate_dashboard(
+                results,
+                failed_jobs,
+                unhandled_exceptions,
+                missing_metrics if self.s3_analyzer else None,
+                empty_metrics if self.s3_analyzer else None,
+                missing_agg if self.s3_analyzer else None,
+            )
+            results["reports_generated"].append(html_file)
+
+        logger.info("=== Analysis Complete ===")
+        logger.info(f"Reports generated in: {self.config.output_dir}")
+        for report in results["reports_generated"]:
+            logger.info(f"  - {report}")
+
+        return results

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Run Analysis Dashboard - {{ batch_name }}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem;
+            border-radius: 10px;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .header h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .header-meta {
+            opacity: 0.9;
+            font-size: 0.9rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value.success { color: #27ae60; }
+        .stat-value.error { color: #e74c3c; }
+        .stat-value.warning { color: #f39c12; }
+        .stat-value.info { color: #3498db; }
+
+        .stat-label {
+            color: #666;
+            font-size: 0.9rem;
+        }
+
+        .tabs {
+            display: flex;
+            background: white;
+            border-radius: 8px 8px 0 0;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            margin-bottom: 0;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 1rem;
+            text-align: center;
+            background: #f8f9fa;
+            border: none;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+        }
+
+        .tab:first-child {
+            border-radius: 8px 0 0 0;
+        }
+
+        .tab:last-child {
+            border-radius: 0 8px 0 0;
+        }
+
+        .tab.active {
+            background: white;
+            color: #667eea;
+            font-weight: bold;
+        }
+
+        .tab:hover:not(.active) {
+            background: #e9ecef;
+        }
+
+        .tab-content {
+            display: none;
+            background: white;
+            padding: 2rem;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .section-title {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: #2c3e50;
+        }
+
+        .table-container {
+            overflow-x: auto;
+            margin: 1rem 0;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.9rem;
+        }
+
+        th, td {
+            text-align: left;
+            padding: 0.75rem;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        th {
+            background-color: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+            position: sticky;
+            top: 0;
+        }
+
+        tr:hover {
+            background-color: #f8f9fa;
+        }
+
+        .error-message {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.8rem;
+            background: #f8f9fa;
+            padding: 0.5rem;
+            border-radius: 4px;
+            border-left: 3px solid #e74c3c;
+            max-height: 200px;
+            overflow-y: auto;
+            line-height: 1.4;
+        }
+
+        .timestamp {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .job-stream {
+            font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+            font-size: 0.8rem;
+            background: #e9ecef;
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+        }
+
+        .no-data {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            padding: 2rem;
+        }
+
+        .export-links {
+            margin-bottom: 1rem;
+        }
+
+        .export-link {
+            display: inline-block;
+            margin-right: 1rem;
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .export-link:hover {
+            text-decoration: underline;
+        }
+
+        .search-box {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 1rem;
+        }
+
+        .filter-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 1rem;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                padding: 10px;
+            }
+            
+            .header {
+                padding: 1rem;
+            }
+            
+            .header h1 {
+                font-size: 1.5rem;
+            }
+            
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+            
+            .tab {
+                border-radius: 0 !important;
+            }
+            
+            .tab:first-child {
+                border-radius: 8px 8px 0 0 !important;
+            }
+            
+            .tab:last-child {
+                border-radius: 0 !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Batch Run Analysis Dashboard</h1>
+            <div class="header-meta">
+                <strong>Batch:</strong> {{ batch_name }} |
+                <strong>Generated:</strong> {{ analysis_timestamp }} |
+                <strong>Time Range:</strong> {{ time_range_days }} days
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value info">{{ submitted_pipelines_count }}</div>
+                <div class="stat-label">Pipelines Submitted</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value error">{{ failed_jobs_count }}</div>
+                <div class="stat-label">Failed Jobs</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value warning">{{ unhandled_exceptions_count }}</div>
+                <div class="stat-label">Unhandled Exceptions</div>
+            </div>
+            {% if missing_metrics_count is defined %}
+            <div class="stat-card">
+                <div class="stat-value warning">{{ missing_metrics_count }}</div>
+                <div class="stat-label">Missing Metrics</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value warning">{{ empty_metrics_count }}</div>
+                <div class="stat-label">Invalid Metrics</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value warning">{{ missing_agg_metrics_count }}</div>
+                <div class="stat-label">Missing Agg Metrics</div>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('failed-jobs')">Failed Jobs</button>
+            <button class="tab" onclick="showTab('exceptions')">Unhandled Exceptions</button>
+            {% if missing_metrics_count is defined %}
+            <button class="tab" onclick="showTab('metrics')">Metrics Issues</button>
+            {% endif %}
+            <button class="tab" onclick="showTab('summary')">Summary</button>
+        </div>
+
+        <div id="failed-jobs" class="tab-content active">
+            <h2 class="section-title">Failed Jobs Analysis</h2>
+            <div class="export-links">
+                <a href="failed_jobs_errors.csv" class="export-link">📥 Download CSV</a>
+            </div>
+            {% if failed_jobs|length > 0 %}
+            <input type="text" class="search-box" placeholder="Search failed jobs..." onkeyup="filterTable('failed-jobs-table', this.value)">
+            <div class="filter-info">
+                Showing <span id="failed-jobs-count">{{ failed_jobs|length }}</span> failed jobs
+            </div>
+            <div class="table-container">
+                <table id="failed-jobs-table">
+                    <thead>
+                        <tr>
+                            <th>Timestamp</th>
+                            <th>Job Stream</th>
+                            <th>Pipeline Stream</th>
+                            <th>Error Messages</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in failed_jobs %}
+                        <tr>
+                            <td><span class="timestamp">{{ job.timestamp or 'N/A' }}</span></td>
+                            <td><span class="job-stream">{{ job.job_log_stream }}</span></td>
+                            <td><span class="job-stream">{{ job.pipeline_log_stream }}</span></td>
+                            <td>
+                                <div class="error-message">{{ job.error_messages|join('\n\n') }}</div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="no-data">No failed jobsFound 🎉</div>
+            {% endif %}
+        </div>
+
+        <div id="exceptions" class="tab-content">
+            <h2 class="section-title">Unhandled Exceptions</h2>
+            <div class="export-links">
+                <a href="unhandled_exceptions.csv" class="export-link">📥 Download CSV</a>
+            </div>
+            {% if unhandled_exceptions|length > 0 %}
+            <input type="text" class="search-box" placeholder="Search exceptions..." onkeyup="filterTable('exceptions-table', this.value)">
+            <div class="filter-info">
+                Showing <span id="exceptions-count">{{ unhandled_exceptions|length }}</span> unhandled exceptions
+            </div>
+            <div class="table-container">
+                <table id="exceptions-table">
+                    <thead>
+                        <tr>
+                            <th>Job Stream</th>
+                            <th>Pipeline Stream</th>
+                            <th>Exception Messages</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for job in unhandled_exceptions %}
+                        <tr>
+                            <td><span class="job-stream">{{ job.job_log_stream }}</span></td>
+                            <td><span class="job-stream">{{ job.pipeline_log_stream }}</span></td>
+                            <td>
+                                <div class="error-message">{{ job.error_messages|join('\n\n') }}</div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="no-data">No unhandled exceptions found 🎉</div>
+            {% endif %}
+        </div>
+
+        {% if missing_metrics_count is defined %}
+        <div id="metrics" class="tab-content">
+            <h2 class="section-title">Metrics File Issues</h2>
+            <div class="export-links">
+                <a href="missing_metrics.csv" class="export-link">📥 Missing Metrics CSV</a>
+                <a href="empty_metrics.csv" class="export-link">📥 Invalid Metrics CSV</a>
+                <a href="missing_agg_metrics.csv" class="export-link">📥 Missing Agg Metrics CSV</a>
+            </div>
+            
+            {% if missing_metrics|length > 0 %}
+            <h3>Missing Metrics Files ({{ missing_metrics|length }})</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Directory</th>
+                            <th>Issue</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in missing_metrics %}
+                        <tr>
+                            <td><span class="job-stream">{{ item.directory }}</span></td>
+                            <td>{{ item.issue }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if empty_metrics|length > 0 %}
+            <h3>Invalid Metrics Files ({{ empty_metrics|length }})</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>File</th>
+                            <th>Line Count</th>
+                            <th>Issue</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in empty_metrics %}
+                        <tr>
+                            <td><span class="job-stream">{{ item.file }}</span></td>
+                            <td>{{ item.line_count }}</td>
+                            <td>{{ item.issue }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if missing_agg_metrics|length > 0 %}
+            <h3>Missing Aggregated Metrics Files ({{ missing_agg_metrics|length }})</h3>
+            <div class="table-container">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Directory</th>
+                            <th>Expected File</th>
+                            <th>Issue</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in missing_agg_metrics %}
+                        <tr>
+                            <td><span class="job-stream">{{ item.directory }}</span></td>
+                            <td><span class="job-stream">{{ item.expected_file }}</span></td>
+                            <td>{{ item.issue }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+            
+            {% if missing_metrics|length == 0 and empty_metrics|length == 0 and missing_agg_metrics|length == 0 %}
+            <div class="no-data">No metrics issues found 🎉</div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <div id="summary" class="tab-content">
+            <h2 class="section-title">Analysis Summary</h2>
+            <div class="export-links">
+                <a href="debug_summary.json" class="export-link">📥 Download JSON Summary</a>
+            </div>
+            
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">
+                <h3>Batch Information</h3>
+                <p><strong>Batch Name:</strong> {{ batch_name }}</p>
+                <p><strong>Analysis Time:</strong> {{ analysis_timestamp }}</p>
+                <p><strong>Time Range:</strong> {{ time_range_days }} days</p>
+            </div>
+
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">
+                <h3>Pipeline Statistics</h3>
+                <p><strong>Pipelines Submitted:</strong> {{ submitted_pipelines_count }}</p>
+                <p><strong>Failed Jobs:</strong> {{ failed_jobs_count }}</p>
+                <p><strong>Unhandled Exceptions:</strong> {{ unhandled_exceptions_count }}</p>
+                {% if missing_metrics_count is defined %}
+                <p><strong>Missing Metrics Files:</strong> {{ missing_metrics_count }}</p>
+                <p><strong>Invalid Metrics Files:</strong> {{ empty_metrics_count }}</p>
+                <p><strong>Missing Agg Metrics Files:</strong> {{ missing_agg_metrics_count }}</p>
+                {% endif %}
+            </div>
+
+            {% if reports_generated|length > 0 %}
+            <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">
+                <h3>Generated Reports</h3>
+                <ul>
+                    {% for report in reports_generated %}
+                    <li><code>{{ report }}</code></li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        function showTab(tabName) {
+            // Hide all tab contents
+            const contents = document.querySelectorAll('.tab-content');
+            contents.forEach(content => content.classList.remove('active'));
+            
+            // Remove active class from all tabs
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(tab => tab.classList.remove('active'));
+            
+            // Show selected tab content
+            document.getElementById(tabName).classList.add('active');
+            
+            // Add active class to clicked tab
+            event.target.classList.add('active');
+        }
+
+        function filterTable(tableId, searchTerm) {
+            const table = document.getElementById(tableId);
+            const rows = table.getElementsByTagName('tr');
+            let visibleCount = 0;
+            
+            // Start from row 1 to skip header
+            for (let i = 1; i < rows.length; i++) {
+                const row = rows[i];
+                const text = row.textContent.toLowerCase();
+                
+                if (text.includes(searchTerm.toLowerCase())) {
+                    row.style.display = '';
+                    visibleCount++;
+                } else {
+                    row.style.display = 'none';
+                }
+            }
+            
+            // Update counter
+            const countElement = document.getElementById(tableId.replace('-table', '-count'));
+            if (countElement) {
+                countElement.textContent = visibleCount;
+            }
+        }
+
+        // Initialize tooltips and interactions
+        document.addEventListener('DOMContentLoaded', function() {
+            // Add click-to-expand functionality for error messages
+            const errorMessages = document.querySelectorAll('.error-message');
+            errorMessages.forEach(msg => {
+                if (msg.scrollHeight > msg.clientHeight) {
+                    msg.style.cursor = 'pointer';
+                    msg.title = 'Click to expand';
+                    msg.addEventListener('click', function() {
+                        if (this.style.maxHeight === 'none') {
+                            this.style.maxHeight = '200px';
+                        } else {
+                            this.style.maxHeight = 'none';
+                        }
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>
