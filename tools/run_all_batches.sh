@@ -99,6 +99,27 @@ for resolution in "${RESOLUTIONS[@]}"; do
         fi
     fi
     
+    # Refresh AWS credentials before batch analysis
+    echo "--- Refreshing AWS Credentials ---"
+    echo "Configuring AWS SSO..."
+    aws configure sso
+    if [[ $? -ne 0 ]]; then
+        echo "Error: AWS SSO configuration failed"
+        read -p "Continue anyway? (y/n): " -n 1 -r
+        echo ""
+        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
+    fi
+    
+    if [[ -f "./update_aws_creds.sh" ]]; then
+        echo "Running update_aws_creds.sh..."
+        ./update_aws_creds.sh
+        if [[ $? -ne 0 ]]; then
+            echo "Warning: update_aws_creds.sh failed"
+        fi
+    else
+        echo "Warning: update_aws_creds.sh not found, skipping"
+    fi
+    
     # Generate batch analysis reports
     echo "--- Generating Batch Reports for ${resolution}m ---"
     reports_output_dir="../reports/$batch_name"

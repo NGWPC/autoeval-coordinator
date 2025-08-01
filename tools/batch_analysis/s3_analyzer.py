@@ -19,11 +19,11 @@ class S3MetricsAnalyzer:
     def __init__(self, config: DebugConfig):
         self.config = config
         if config.s3_output_root:
-            # Use the default profile from .aws/credentials
+            # Use the fimc-data profile from .aws/credentials
             # This will override environment variables
             self.fs = fsspec.filesystem(
                 "s3",
-                profile="default"
+                profile="fimc-data"
             )
 
     def find_missing_metrics(self) -> List[Dict[str, str]]:

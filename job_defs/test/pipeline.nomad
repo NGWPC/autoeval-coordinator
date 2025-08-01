@@ -24,7 +24,7 @@ job "pipeline" {
 
   group "pipeline-coordinator" {
     reschedule {
-      attempts = 10
+      attempts = 1 # Only attempt to reschedule once
       interval = "24h"
       delay = "3m"
       delay_function = "constant"
@@ -32,7 +32,7 @@ job "pipeline" {
     }
 
     restart {
-      attempts = 4        # Try 4 times on the same node
+      attempts = 1        # Try again once on the same node. Don't actually want to attempt a failing pipeline too many times. Want to be more stubborn with restart attempts at the job level.
       interval = "10m"    # Within a 10 minute window
       delay    = "45s"    # Wait 45s between attempts
       mode     = "fail"   # Fail after attempts exhausted
@@ -98,7 +98,7 @@ job "pipeline" {
         
         # STAC Configuration
         STAC_API_URL            = "http://benchmark-stac.test.nextgenwaterprediction.com:8000/" # Using production STAC API for test
-        STAC_OVERLAP_THRESHOLD_PERCENT = "40.0"
+        STAC_OVERLAP_THRESHOLD_PERCENT = "80.0" # set high when doing evals per STAC item. Only want one STAC item per eval
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         
         # Job Names for dispatching child jobs

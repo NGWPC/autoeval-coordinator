@@ -87,7 +87,7 @@ job "fim_mosaicker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Output Configuration
-        MOSAIC_BLOCK_SIZE = "512"
+        MOSAIC_BLOCK_SIZE = "1024" # use bigger blocks to boost the  effect of using multiple threads
         MOSAIC_COMPRESS_TYPE = "LZW"
         MOSAIC_PREDICTOR = "2"
         
@@ -98,7 +98,7 @@ job "fim_mosaicker" {
       }
 
       resources {
-        memory = 4000
+        memory = 5000
       }
 
       logs {

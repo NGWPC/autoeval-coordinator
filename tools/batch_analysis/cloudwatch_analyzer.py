@@ -19,8 +19,9 @@ class CloudWatchAnalyzer:
 
     def __init__(self, config: DebugConfig):
         self.config = config
-        # Use credentials from shell environment for CloudWatch
-        self.client = boto3.client("logs")
+        # Use cloudwatch profile for CloudWatch
+        session = boto3.Session(profile_name="cloudwatch")
+        self.client = session.client("logs")
         self.error_extractor = ErrorPatternExtractor()
 
     def run_query(self, log_group: str, query_string: str) -> List[Dict]:
