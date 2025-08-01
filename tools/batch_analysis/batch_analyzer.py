@@ -82,13 +82,15 @@ class BatchRunAnalyzer:
             report_file = self.report_generator.generate_unique_errors_report(unique_errors)
             results["reports_generated"].append(report_file)
 
+        # Initialize unhandled_exceptions list for HTML generator
+        unhandled_exceptions = []
+        
         if unhandled_exceptions_unique:
             # Generate unique exceptions report
             report_file = self.report_generator.generate_unique_exceptions_report(unhandled_exceptions_unique)
             results["reports_generated"].append(report_file)
             
             # Also generate legacy format for compatibility
-            unhandled_exceptions = []
             for unique_exc in unhandled_exceptions_unique:
                 unhandled_exceptions.append(
                     FailedJobInfo(
