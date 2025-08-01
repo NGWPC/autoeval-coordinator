@@ -270,6 +270,7 @@ class StacQuerier:
         # Track STAC item IDs for each scenario
         item_ids = defaultdict(lambda: defaultdict(set))
         gauge_info = defaultdict(lambda: defaultdict(lambda: None))
+        hucs_info = defaultdict(lambda: defaultdict(list))
 
         for idx, item in enumerate(item_iter, start=1):
             if item.collection_id == "ripple-fim-collection":
@@ -314,6 +315,14 @@ class StacQuerier:
                 gid = group_fn(item)
                 bucket = results[collection_key][gid]
                 item_ids[collection_key][gid].add(item.id)
+                
+                # Extract hucs for item-level collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for huc in hucs:
+                        if huc not in hucs_info[collection_key][gid]:
+                            hucs_info[collection_key][gid].append(huc)
+                
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -345,6 +354,14 @@ class StacQuerier:
                             gauge = item.properties.get("gauge")
                             if gauge and gauge_info[collection_key][gid] is None:
                                 gauge_info[collection_key][gid] = gauge
+                
+                # Extract hucs for all asset-level collections (BLE, NWS, USGS)
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for gid in found:
+                        for huc in hucs:
+                            if huc not in hucs_info[collection_key][gid]:
+                                hucs_info[collection_key][gid].append(huc)
 
             # 3) Ripple asset-level grouping with source-based separation
             elif coll == "ripple-fim-collection":
@@ -383,6 +400,14 @@ class StacQuerier:
                             bkt[at].append(a.href)
                         found.add(gid)
 
+                # Extract hucs for Ripple collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for gid in found:
+                        for huc in hucs:
+                            if huc not in hucs_info[collection_key][gid]:
+                                hucs_info[collection_key][gid].append(huc)
+                
                 # append ripple flowfiles
                 for composite_gid in found:
                     # Extract "100yr" from "SourceA-100yr"
@@ -404,6 +429,13 @@ class StacQuerier:
                     gauge = item.properties.get("gauge")
                     if gauge and gauge_info[collection_key][gid] is None:
                         gauge_info[collection_key][gid] = gauge
+                
+                # Extract hucs for fallback collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for huc in hucs:
+                        if huc not in hucs_info[collection_key][gid]:
+                            hucs_info[collection_key][gid].append(huc)
 
                 for k, a in item.assets.items():
                     if not a.href:
@@ -413,11 +445,12 @@ class StacQuerier:
                     elif "flow" in k and a.media_type and "csv" in a.media_type:
                         bkt["flowfiles"].append(a.href)
 
-        # Add item IDs and gauge information to results
+        # Add item IDs, gauge information, and hucs to results
         for collection_key in results:
             for scenario_id in results[collection_key]:
                 results[collection_key][scenario_id]["stac_items"] = list(item_ids[collection_key][scenario_id])
                 results[collection_key][scenario_id]["gauge"] = gauge_info[collection_key][scenario_id]
+                results[collection_key][scenario_id]["hucs"] = hucs_info[collection_key][scenario_id]
 
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
@@ -447,6 +480,14 @@ class StacQuerier:
                         # Handle gauge specially - it's a single value, not a list
                         if hs is not None:
                             iv.assets[at] = hs
+                    elif at == "hucs":
+                        # Handle hucs specially - merge lists without duplicates
+                        if hs:
+                            existing_hucs = iv.assets.get(at, [])
+                            for h in hs:
+                                if h not in existing_hucs:
+                                    existing_hucs.append(h)
+                            iv.assets[at] = existing_hucs
                     else:
                         for h in hs:
                             if h not in iv.assets[at]:
@@ -471,6 +512,14 @@ class StacQuerier:
                         # Handle gauge specially - use the first non-null value
                         if hs is not None and at not in cur.assets:
                             cur.assets[at] = hs
+                    elif at == "hucs":
+                        # Handle hucs specially - merge lists without duplicates
+                        if hs:
+                            existing_hucs = cur.assets.get(at, [])
+                            for h in hs:
+                                if h not in existing_hucs:
+                                    existing_hucs.append(h)
+                            cur.assets[at] = existing_hucs
                     else:
                         for h in hs:
                             if h not in cur.assets[at]:

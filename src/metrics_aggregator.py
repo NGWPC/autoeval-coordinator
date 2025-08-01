@@ -96,7 +96,7 @@ class MetricsAggregator:
                     logger.warning(f"Empty metrics file: {metrics_file}")
                     continue
 
-                stac_items, gauge = self._get_stac_items_for_scenario(
+                stac_items, gauge, hucs = self._get_stac_items_for_scenario(
                     collection_name, scenario_name, collection_mapping
                 )
 
@@ -121,6 +121,9 @@ class MetricsAggregator:
                 # Add nws_lid column with gauge information
                 metrics_df["nws_lid"] = gauge
 
+                # Add hucs column with semicolon-separated string (like stac_item_id)
+                metrics_df["hucs"] = ";".join(hucs) if hucs else ""
+
                 all_metrics.append(metrics_df)
 
                 logger.info(f"Processed metrics for {collection_name}/{scenario_name}: {len(metrics_df)} rows")
@@ -137,7 +140,7 @@ class MetricsAggregator:
         combined_df = pd.concat(all_metrics, ignore_index=True)
 
         # Reorder columns to put metadata first
-        metadata_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"]
+        metadata_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid", "hucs"]
         metrics_cols = [col for col in combined_df.columns if col not in metadata_cols]
         combined_df = combined_df[metadata_cols + metrics_cols]
 
@@ -147,9 +150,9 @@ class MetricsAggregator:
 
     def _get_stac_items_for_scenario(
         self, collection_name: str, scenario_name: str, collection_mapping: dict
-    ) -> tuple[List[str], Optional[str]]:
+    ) -> tuple[List[str], Optional[str], List[str]]:
         """
-        Get STAC item IDs and gauge information for a specific collection and scenario.
+        Get STAC item IDs, gauge information, and hucs for a specific collection and scenario.
 
         Args:
             collection_name: Name of the collection (e.g., "BLE", "USGS")
@@ -157,7 +160,7 @@ class MetricsAggregator:
             collection_mapping: Mapping from short names to full collection IDs
 
         Returns:
-            Tuple of (List of STAC item IDs for this scenario, gauge string or None)
+            Tuple of (List of STAC item IDs for this scenario, gauge string or None, List of hucs)
         """
         # Get the full collection ID from the mapping
         stac_collection = collection_mapping.get(collection_name.lower(), collection_name.lower())
@@ -171,15 +174,15 @@ class MetricsAggregator:
             # Try exact match first
             if scenario_name in scenarios:
                 scenario_data = scenarios[scenario_name]
-                return scenario_data.get("stac_items", []), scenario_data.get("gauge")
+                return scenario_data.get("stac_items", []), scenario_data.get("gauge"), scenario_data.get("hucs", [])
 
             # Try case-insensitive match
             for scenario_key, scenario_data in scenarios.items():
                 if scenario_key.lower() == scenario_name.lower():
-                    return scenario_data.get("stac_items", []), scenario_data.get("gauge")
+                    return scenario_data.get("stac_items", []), scenario_data.get("gauge"), scenario_data.get("hucs", [])
 
         logger.warning(f"No STAC items found for {collection_name}/{scenario_name}")
-        return [], None
+        return [], None, []
 
     def save_results(self, output_path: str) -> str:
         """
@@ -197,7 +200,7 @@ class MetricsAggregator:
 
         if new_df.empty:
             logger.warning("No metrics to aggregate")
-            new_df = pd.DataFrame(columns=["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"])
+            new_df = pd.DataFrame(columns=["collection_id", "stac_item_id", "scenario", "flow", "nws_lid", "hucs"])
 
         # Try to read existing agg_metrics file
         try:
@@ -223,7 +226,7 @@ class MetricsAggregator:
 
         # Ensure consistent column order
         if not final_df.empty:
-            metadata_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"]
+            metadata_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid", "hucs"]
             existing_metadata_cols = [col for col in metadata_cols if col in final_df.columns]
             other_cols = [col for col in final_df.columns if col not in metadata_cols]
             final_df = final_df[existing_metadata_cols + other_cols]
@@ -244,7 +247,7 @@ class MetricsAggregator:
         For rows with nearly identical metrics, keep the one with more complete metadata.
         """
         # Define metadata columns
-        meta_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid"]
+        meta_cols = ["collection_id", "stac_item_id", "scenario", "flow", "nws_lid", "hucs"]
 
         # Auto-detect metrics columns (numeric columns not in metadata)
         metrics_cols = [
