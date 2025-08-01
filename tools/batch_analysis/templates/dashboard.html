@@ -281,6 +281,12 @@
                 <div class="stat-value warning">{{ unhandled_exceptions_count }}</div>
                 <div class="stat-label">Unhandled Exceptions</div>
             </div>
+            {% if unique_error_patterns_count > 0 %}
+            <div class="stat-card">
+                <div class="stat-value info">{{ unique_error_patterns_count }}</div>
+                <div class="stat-label">Unique Error Patterns</div>
+            </div>
+            {% endif %}
             {% if missing_aois_count is defined %}
             <div class="stat-card">
                 <div class="stat-value error">{{ missing_aois_count }}</div>
@@ -304,8 +310,16 @@
         </div>
 
         <div class="tabs">
+            {% if unique_errors|length > 0 %}
+            <button class="tab active" onclick="showTab('unique-errors')">🔍 Unique Errors</button>
+            <button class="tab" onclick="showTab('failed-jobs')">📋 All Failed Jobs</button>
+            {% else %}
             <button class="tab active" onclick="showTab('failed-jobs')">Failed Jobs</button>
-            <button class="tab" onclick="showTab('exceptions')">Unhandled Exceptions</button>
+            {% endif %}
+            {% if unique_unhandled_exceptions|length > 0 %}
+            <button class="tab" onclick="showTab('unique-exceptions')">⚡ Unique Exceptions</button>
+            {% endif %}
+            <button class="tab" onclick="showTab('exceptions')">📋 All Exceptions</button>
             {% if missing_aois_count is defined %}
             <button class="tab" onclick="showTab('missing-aois')">Missing AOIs</button>
             {% endif %}
@@ -315,7 +329,110 @@
             <button class="tab" onclick="showTab('summary')">Summary</button>
         </div>
 
-        <div id="failed-jobs" class="tab-content active">
+        {% if unique_errors|length > 0 %}
+        <div id="unique-errors" class="tab-content active">
+            <h2 class="section-title">🔍 Unique Error Patterns (Optimized View)</h2>
+            <div class="export-links">
+                <a href="unique_error_patterns.csv" class="export-link">📥 Download CSV</a>
+            </div>
+            <div style="background: #e8f4fd; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; border-left: 4px solid #3498db;">
+                <strong>💡 Optimization Benefits:</strong> This view shows only <strong>{{ unique_errors|length }} unique error patterns</strong> 
+                instead of {{ failed_jobs_count }} individual failed jobs, making it easier to identify root causes and prioritize fixes.
+                Each pattern shows when it first occurred and how many jobs were affected.
+            </div>
+            <input type="text" class="search-box" placeholder="Search unique error patterns..." onkeyup="filterTable('unique-errors-table', this.value)">
+            <div class="filter-info">
+                Showing <span id="unique-errors-count">{{ unique_errors|length }}</span> unique error patterns
+            </div>
+            <div class="table-container">
+                <table id="unique-errors-table">
+                    <thead>
+                        <tr>
+                            <th>Error Pattern</th>
+                            <th>Type</th>
+                            <th>Count</th>
+                            <th>First Seen</th>
+                            <th>First Job</th>
+                            <th>Affected Jobs</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for error in unique_errors %}
+                        <tr>
+                            <td>
+                                <div class="error-message">{{ error.error_pattern }}</div>
+                            </td>
+                            <td>
+                                <span style="background: #f39c12; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8rem;">
+                                    {{ error.error_type }}
+                                </span>
+                            </td>
+                            <td style="text-align: center;">
+                                <strong style="color: #e74c3c;">{{ error.occurrence_count }}</strong>
+                            </td>
+                            <td><span class="timestamp">{{ error.first_occurrence_timestamp }}</span></td>
+                            <td><span class="job-stream">{{ error.first_occurrence_job_stream }}</span></td>
+                            <td style="text-align: center;">{{ error.affected_job_streams|length }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if unique_unhandled_exceptions|length > 0 %}
+        <div id="unique-exceptions" class="tab-content">
+            <h2 class="section-title">⚡ Unique Unhandled Exception Patterns</h2>
+            <div class="export-links">
+                <a href="unique_unhandled_exceptions.csv" class="export-link">📥 Download CSV</a>
+            </div>
+            <div style="background: #fff3cd; padding: 1rem; border-radius: 6px; margin-bottom: 1rem; border-left: 4px solid #f39c12;">
+                <strong>⚠️ Unhandled Exceptions:</strong> These are raw exceptions not captured in JSON log format. 
+                Showing <strong>{{ unique_unhandled_exceptions|length }} unique patterns</strong> from potentially many occurrences.
+            </div>
+            <input type="text" class="search-box" placeholder="Search unique exception patterns..." onkeyup="filterTable('unique-exceptions-table', this.value)">
+            <div class="filter-info">
+                Showing <span id="unique-exceptions-count">{{ unique_unhandled_exceptions|length }}</span> unique exception patterns
+            </div>
+            <div class="table-container">
+                <table id="unique-exceptions-table">
+                    <thead>
+                        <tr>
+                            <th>Exception Pattern</th>
+                            <th>Type</th>
+                            <th>Count</th>
+                            <th>First Seen</th>
+                            <th>First Job</th>
+                            <th>Affected Jobs</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for exception in unique_unhandled_exceptions %}
+                        <tr>
+                            <td>
+                                <div class="error-message">{{ exception.error_pattern }}</div>
+                            </td>
+                            <td>
+                                <span style="background: #e74c3c; color: white; padding: 2px 6px; border-radius: 3px; font-size: 0.8rem;">
+                                    {{ exception.error_type }}
+                                </span>
+                            </td>
+                            <td style="text-align: center;">
+                                <strong style="color: #e74c3c;">{{ exception.occurrence_count }}</strong>
+                            </td>
+                            <td><span class="timestamp">{{ exception.first_occurrence_timestamp }}</span></td>
+                            <td><span class="job-stream">{{ exception.first_occurrence_job_stream }}</span></td>
+                            <td style="text-align: center;">{{ exception.affected_job_streams|length }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <div id="failed-jobs" class="tab-content{% if unique_errors|length == 0 %} active{% endif %}">
             <h2 class="section-title">Failed Jobs Analysis</h2>
             <div class="export-links">
                 <a href="failed_jobs_errors.csv" class="export-link">📥 Download CSV</a>
@@ -532,7 +649,13 @@
                 <h3>Pipeline Statistics</h3>
                 <p><strong>Pipelines Submitted:</strong> {{ submitted_pipelines_count }}</p>
                 <p><strong>Failed Jobs:</strong> {{ failed_jobs_count }}</p>
+                {% if unique_error_patterns_count > 0 %}
+                <p><strong>🔍 Unique Error Patterns:</strong> {{ unique_error_patterns_count }} <em>(optimized from {{ failed_jobs_count }} individual errors)</em></p>
+                {% endif %}
                 <p><strong>Unhandled Exceptions:</strong> {{ unhandled_exceptions_count }}</p>
+                {% if unique_unhandled_exceptions|length > 0 %}
+                <p><strong>⚡ Unique Exception Patterns:</strong> {{ unique_unhandled_exceptions|length }}</p>
+                {% endif %}
                 {% if missing_aois_count is defined %}
                 <p><strong>Missing AOIs (no logs):</strong> {{ missing_aois_count }}</p>
                 {% endif %}
@@ -542,6 +665,16 @@
                 <p><strong>Missing Agg Metrics Files:</strong> {{ missing_agg_metrics_count }}</p>
                 {% endif %}
             </div>
+
+            {% if unique_errors|length > 0 %}
+            <div style="background: #d4edda; padding: 1.5rem; border-radius: 8px; margin: 1rem 0; border-left: 4px solid #27ae60;">
+                <h3>🚀 Optimization Benefits</h3>
+                <p><strong>Query Performance:</strong> Reduced from {{ failed_jobs_count }} individual queries to bulk aggregated queries</p>
+                <p><strong>Analysis Focus:</strong> {{ unique_errors|length }} unique error patterns instead of {{ failed_jobs_count }} repetitive logs</p>
+                <p><strong>Time Savings:</strong> Focus on the first occurrence of each error type for faster debugging</p>
+                <p><strong>Human Readability:</strong> Normalized error patterns remove noise like timestamps and job-specific details</p>
+            </div>
+            {% endif %}
 
             {% if reports_generated|length > 0 %}
             <div style="background: #f8f9fa; padding: 1.5rem; border-radius: 8px; margin: 1rem 0;">

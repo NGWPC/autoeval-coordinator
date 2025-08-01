@@ -209,8 +209,8 @@ def main():
 
     logging.info(f"Successfully extracted {len(item_files)} STAC item geometries")
 
-    # Initialize fsspec S3 filesystem
-    s3_fs = fsspec.filesystem("s3")
+    # Initialize fsspec S3 filesystem with default profile
+    s3_fs = fsspec.filesystem("s3", profile="default")
 
     # Upload AOI files to S3
     s3_aoi_paths = {}

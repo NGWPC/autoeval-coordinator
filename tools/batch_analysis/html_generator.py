@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from .models import FailedJobInfo
+from .models import FailedJobInfo, UniqueErrorInfo
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,8 @@ class HTMLGenerator:
         empty_metrics: List[Dict] = None,
         missing_agg_metrics: List[Dict] = None,
         missing_aois: List[str] = None,
+        unique_errors: List[UniqueErrorInfo] = None,
+        unique_unhandled_exceptions: List[UniqueErrorInfo] = None,
     ) -> str:
         """Generate HTML dashboard from analysis results."""
         
@@ -47,8 +49,11 @@ class HTMLGenerator:
             'submitted_pipelines_count': analysis_results.get('submitted_pipelines_count', 0),
             'failed_jobs_count': analysis_results.get('failed_jobs_count', 0),
             'unhandled_exceptions_count': analysis_results.get('unhandled_exceptions_count', 0),
+            'unique_error_patterns_count': analysis_results.get('unique_error_patterns_count', 0),
             'failed_jobs': failed_jobs,
             'unhandled_exceptions': unhandled_exceptions,
+            'unique_errors': unique_errors or [],
+            'unique_unhandled_exceptions': unique_unhandled_exceptions or [],
             'reports_generated': analysis_results.get('reports_generated', []),
         }
         

@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any, Dict, List, Set
 
-from .models import FailedJobInfo
+from .models import FailedJobInfo, UniqueErrorInfo
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,72 @@ class ReportGenerator:
             logger.info(f"Generated missing agg_metrics report: {output_file}")
 
         return reports
+
+    def generate_unique_errors_report(self, unique_errors: List[UniqueErrorInfo]) -> str:
+        """Generate CSV report of unique error patterns with occurrence counts."""
+        output_file = self.output_dir / "unique_error_patterns.csv"
+
+        with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
+            fieldnames = [
+                "error_pattern", 
+                "error_type", 
+                "occurrence_count", 
+                "first_occurrence_timestamp",
+                "first_occurrence_job_stream",
+                "first_occurrence_pipeline_stream",
+                "affected_job_streams_count",
+                "sample_raw_message"
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for error in unique_errors:
+                writer.writerow({
+                    "error_pattern": error.error_pattern,
+                    "error_type": error.error_type,
+                    "occurrence_count": error.occurrence_count,
+                    "first_occurrence_timestamp": error.first_occurrence_timestamp,
+                    "first_occurrence_job_stream": error.first_occurrence_job_stream,
+                    "first_occurrence_pipeline_stream": error.first_occurrence_pipeline_stream,
+                    "affected_job_streams_count": len(error.affected_job_streams),
+                    "sample_raw_message": error.sample_raw_message[:500] + "..." if len(error.sample_raw_message) > 500 else error.sample_raw_message
+                })
+
+        logger.info(f"Generated unique error patterns report: {output_file}")
+        return str(output_file)
+
+    def generate_unique_exceptions_report(self, unique_exceptions: List[UniqueErrorInfo]) -> str:
+        """Generate CSV report of unique unhandled exception patterns."""
+        output_file = self.output_dir / "unique_unhandled_exceptions.csv"
+
+        with open(output_file, "w", newline="", encoding="utf-8") as csvfile:
+            fieldnames = [
+                "exception_pattern", 
+                "exception_type", 
+                "occurrence_count", 
+                "first_occurrence_timestamp",
+                "first_occurrence_job_stream",
+                "first_occurrence_pipeline_stream",
+                "affected_job_streams_count",
+                "sample_raw_message"
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+
+            writer.writeheader()
+            for exception in unique_exceptions:
+                writer.writerow({
+                    "exception_pattern": exception.error_pattern,
+                    "exception_type": exception.error_type,
+                    "occurrence_count": exception.occurrence_count,
+                    "first_occurrence_timestamp": exception.first_occurrence_timestamp,
+                    "first_occurrence_job_stream": exception.first_occurrence_job_stream,
+                    "first_occurrence_pipeline_stream": exception.first_occurrence_pipeline_stream,
+                    "affected_job_streams_count": len(exception.affected_job_streams),
+                    "sample_raw_message": exception.sample_raw_message[:500] + "..." if len(exception.sample_raw_message) > 500 else exception.sample_raw_message
+                })
+
+        logger.info(f"Generated unique unhandled exceptions report: {output_file}")
+        return str(output_file)
 
     def generate_summary_report(self, analysis_results: Dict[str, Any]) -> str:
         """Generate JSON summary of all analysis results."""

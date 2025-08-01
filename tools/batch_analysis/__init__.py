@@ -1,6 +1,6 @@
 """Batch analysis package for pipeline batch run reporting and analysis."""
 
-from .models import DebugConfig, FailedJobInfo
+from .models import DebugConfig, FailedJobInfo, UniqueErrorInfo, ErrorAnalysisResult
 from .cloudwatch_analyzer import CloudWatchAnalyzer
 from .s3_analyzer import S3MetricsAnalyzer
 from .report_generator import ReportGenerator
@@ -9,7 +9,9 @@ from .batch_analyzer import BatchRunAnalyzer
 
 __all__ = [
     "DebugConfig",
-    "FailedJobInfo", 
+    "FailedJobInfo",
+    "UniqueErrorInfo",
+    "ErrorAnalysisResult",
     "CloudWatchAnalyzer",
     "S3MetricsAnalyzer",
     "ReportGenerator",

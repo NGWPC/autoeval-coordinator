@@ -2,8 +2,11 @@
 
 import logging
 from typing import Dict, List
+import os
 
 import fsspec
+import boto3
+from botocore.config import Config
 
 from .models import DebugConfig
 
@@ -16,7 +19,12 @@ class S3MetricsAnalyzer:
     def __init__(self, config: DebugConfig):
         self.config = config
         if config.s3_output_root:
-            self.fs = fsspec.filesystem("s3")
+            # Use the default profile from .aws/credentials
+            # This will override environment variables
+            self.fs = fsspec.filesystem(
+                "s3",
+                profile="default"
+            )
 
     def find_missing_metrics(self) -> List[Dict[str, str]]:
         """Find directories missing metrics.csv files."""

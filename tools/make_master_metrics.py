@@ -21,7 +21,7 @@ def get_huc_directories(output_root: str) -> List[tuple[str, str]]:
     huc_dirs = []
 
     if output_root.startswith("s3://"):
-        fs = fsspec.filesystem("s3")
+        fs = fsspec.filesystem("s3", profile="default")
         try:
             items = fs.ls(output_root, detail=True)
             for item in items:

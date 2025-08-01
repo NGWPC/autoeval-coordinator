@@ -6,7 +6,7 @@ from typing import Any, Dict
 
 from .cloudwatch_analyzer import CloudWatchAnalyzer
 from .html_generator import HTMLGenerator
-from .models import DebugConfig
+from .models import DebugConfig, FailedJobInfo
 from .report_generator import ReportGenerator
 from .s3_analyzer import S3MetricsAnalyzer
 
@@ -34,15 +34,24 @@ class BatchRunAnalyzer:
             "reports_generated": [],
         }
 
-        # CloudWatch analysis
-        logger.info("=== CloudWatch Analysis ===")
-        failed_jobs = self.cloudwatch.find_failed_jobs()
-        unhandled_exceptions = self.cloudwatch.find_unhandled_exceptions()
+        # CloudWatch analysis with optimization
+        logger.info("=== CloudWatch Analysis (Optimized) ===")
+        error_analysis = self.cloudwatch.find_failed_jobs_optimized()
+        unhandled_exceptions_unique = self.cloudwatch.find_unhandled_exceptions_optimized()
         submitted_pipelines = self.cloudwatch.find_submitted_pipelines()
 
+        # Extract data from optimized results
+        failed_jobs = error_analysis.failed_jobs
+        unique_errors = error_analysis.unique_errors
+        
         results["failed_jobs_count"] = len(failed_jobs)
-        results["unhandled_exceptions_count"] = len(unhandled_exceptions)
+        results["unique_error_patterns_count"] = len(unique_errors)
+        results["unhandled_exceptions_count"] = len(unhandled_exceptions_unique)
         results["submitted_pipelines_count"] = len(submitted_pipelines)
+        
+        # Store unique analysis for reporting
+        results["unique_errors"] = unique_errors
+        results["unique_unhandled_exceptions"] = unhandled_exceptions_unique
 
         # AOI list comparison (if provided)
         missing_aois = []
@@ -68,7 +77,26 @@ class BatchRunAnalyzer:
             report_file = self.report_generator.generate_failed_jobs_report(failed_jobs)
             results["reports_generated"].append(report_file)
 
-        if unhandled_exceptions:
+        # Generate unique error pattern reports (new optimized reports)
+        if unique_errors:
+            report_file = self.report_generator.generate_unique_errors_report(unique_errors)
+            results["reports_generated"].append(report_file)
+
+        if unhandled_exceptions_unique:
+            # Generate unique exceptions report
+            report_file = self.report_generator.generate_unique_exceptions_report(unhandled_exceptions_unique)
+            results["reports_generated"].append(report_file)
+            
+            # Also generate legacy format for compatibility
+            unhandled_exceptions = []
+            for unique_exc in unhandled_exceptions_unique:
+                unhandled_exceptions.append(
+                    FailedJobInfo(
+                        pipeline_log_stream=unique_exc.first_occurrence_pipeline_stream,
+                        job_log_stream=unique_exc.first_occurrence_job_stream,
+                        error_messages=[unique_exc.sample_raw_message]
+                    )
+                )
             report_file = self.report_generator.generate_unhandled_exceptions_report(unhandled_exceptions)
             results["reports_generated"].append(report_file)
 
@@ -113,6 +141,8 @@ class BatchRunAnalyzer:
                 empty_metrics if self.s3_analyzer else None,
                 missing_agg if self.s3_analyzer else None,
                 missing_aois if missing_aois else None,
+                unique_errors,
+                unhandled_exceptions_unique,
             )
             results["reports_generated"].append(html_file)
 
