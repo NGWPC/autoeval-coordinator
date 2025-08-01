@@ -83,7 +83,7 @@ job "agreement_maker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Processing Configuration
-        DASK_CLUST_MAX_MEM = "8GB"
+        DASK_CLUST_MAX_MEM = "12GB"
         RASTERIO_CHUNK_SIZE = "4096"
         DEFAULT_WRITE_BLOCK_SIZE = "4096"
         COG_BLOCKSIZE = "512"
@@ -100,7 +100,7 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 8000 # Higher memory for large raster processing
+        memory = 12000 # Higher memory for large raster processing
       }
 
       logs {

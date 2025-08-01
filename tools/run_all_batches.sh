@@ -9,8 +9,12 @@ declare -a RESOLUTIONS=("10" "5" "3")
 
 declare -a COLLECTIONS=("ble-collection" "nws-fim-collection" "ripple-fim-collection" "usgs-fim-collection")
 
+# Generate timestamp in format: YYYY-MM-DD-HH (e.g., 2025-08-01-14 for 2PM on Aug 1, 2025)
+TIMESTAMP=$(date +"%Y-%m-%d-%H")
+
 echo "=== Autoeval Batch Processing Script ==="
 echo "Processing ${#RESOLUTIONS[@]} resolutions x ${#COLLECTIONS[@]} collections"
+echo "Timestamp: $TIMESTAMP"
 echo ""
 
 confirm_command() {
@@ -31,7 +35,7 @@ for resolution in "${RESOLUTIONS[@]}"; do
     echo "=== Processing Resolution: ${resolution}m ==="
     
     # Define resolution-specific parameters
-    batch_name="fim100_huc12_${resolution}m"
+    batch_name="fim100_huc12_${resolution}m_${TIMESTAMP}"
     output_root="s3://fimc-data/autoeval/batches/fim100_huc12_${resolution}m_non_calibrated/"
     hand_index_path="s3://fimc-data/autoeval/hand_output_indices/fim100_huc12_${resolution}m_index/"
     
@@ -49,7 +53,7 @@ for resolution in "${RESOLUTIONS[@]}"; do
         fi
         
         # Build the submit_stac_batch.py command
-        submit_cmd="python ./tools/submit_stac_batch.py --batch_name $batch_name --output_root $output_root --hand_index_path $hand_index_path --benchmark_sources \"$collection\" --item_list $item_list_file --wait_seconds 10 --max_pipelines 500"
+        submit_cmd="python ./tools/submit_stac_batch.py --batch_name $batch_name --output_root $output_root --hand_index_path $hand_index_path --benchmark_sources \"$collection\" --item_list $item_list_file --wait_seconds 10 --max_pipelines 150" # Scaling tests showed you shouldn't go above 150 pipelines with current Nomad deploy.
         
         # Get user confirmation and execute
         if confirm_command "$submit_cmd"; then
@@ -63,6 +67,18 @@ for resolution in "${RESOLUTIONS[@]}"; do
             fi
         else
             continue
+        fi
+        
+        # Purge dispatch jobs after each collection
+        echo "--- Purging Dispatch Jobs after $collection ---"
+        purge_cmd="python tools/purge_dispatch_jobs.py"
+        
+        if confirm_command "$purge_cmd"; then
+            echo "Executing purge_dispatch_jobs.py..."
+            eval $purge_cmd
+            if [[ $? -ne 0 ]]; then
+                echo "Warning: purge_dispatch_jobs.py failed"
+            fi
         fi
         
         echo ""
@@ -96,17 +112,6 @@ for resolution in "${RESOLUTIONS[@]}"; do
         else
             echo "Reports generated at: $reports_output_dir"
             echo "View dashboard: $reports_output_dir/batch_analysis_dashboard.html"
-        fi
-    fi
-    
-    echo "--- Purging Dispatch Jobs for ${resolution}m ---"
-    purge_cmd="python tools/purge_dispatch_jobs.py"
-    
-    if confirm_command "$purge_cmd"; then
-        echo "Executing purge_dispatch_jobs.py..."
-        eval $purge_cmd
-        if [[ $? -ne 0 ]]; then
-            echo "Warning: purge_dispatch_jobs.py failed"
         fi
     fi
     
