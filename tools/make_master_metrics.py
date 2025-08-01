@@ -11,14 +11,14 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-def get_huc_directories(output_root: str) -> List[tuple[str, str]]:
+def get_stac_item_directories(output_root: str) -> List[tuple[str, str]]:
     """
-    Get all HUC subdirectories from the output root.
+    Get all STAC item subdirectories from the output root.
 
     Returns:
-        List of tuples (huc_code, full_path)
+        List of tuples (stac_item_code, full_path)
     """
-    huc_dirs = []
+    stac_item_dirs = []
 
     if output_root.startswith("s3://"):
         fs = fsspec.filesystem("s3", profile="fimc-data")
@@ -26,11 +26,11 @@ def get_huc_directories(output_root: str) -> List[tuple[str, str]]:
             items = fs.ls(output_root, detail=True)
             for item in items:
                 if item["type"] == "directory":
-                    huc_code = item["name"].split("/")[-1]
+                    stac_item_code = item["name"].split("/")[-1]
                     full_path = item["name"]
                     if not full_path.endswith("/"):
                         full_path += "/"
-                    huc_dirs.append((huc_code, full_path))
+                    stac_item_dirs.append((stac_item_code, full_path))
         except Exception as e:
             logger.error(f"Error listing S3 directories: {e}")
     else:
@@ -39,9 +39,9 @@ def get_huc_directories(output_root: str) -> List[tuple[str, str]]:
         if output_path.exists() and output_path.is_dir():
             for item in output_path.iterdir():
                 if item.is_dir():
-                    huc_dirs.append((item.name, str(item)))
+                    stac_item_dirs.append((item.name, str(item)))
 
-    return huc_dirs
+    return stac_item_dirs
 
 
 def read_agg_metrics(agg_metrics_path: str) -> Optional[pd.DataFrame]:
@@ -81,28 +81,27 @@ def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolutio
     """
     all_metrics = []
 
-    huc_dirs = get_huc_directories(output_root)
+    stac_item_dirs = get_stac_item_directories(output_root)
 
-    if not huc_dirs:
+    if not stac_item_dirs:
         logger.warning(f"No subdirectories found in {output_root}")
         return pd.DataFrame()
 
-    logger.info(f"Found {len(huc_dirs)} HUC directories")
+    logger.info(f"Found {len(stac_item_dirs)} STAC item directories")
 
-    for huc_code, huc_path in huc_dirs:
-        if huc_path.startswith("s3://"):
-            agg_metrics_path = f"{huc_path.rstrip('/')}/{huc_code}__agg_metrics.csv"
+    for stac_item_code, stac_item_path in stac_item_dirs:
+        if stac_item_path.startswith("s3://"):
+            agg_metrics_path = f"{stac_item_path.rstrip('/')}/{stac_item_code}__agg_metrics.csv"
         elif output_root.startswith("s3://"):
-            # Handle case where huc_path doesn't have s3:// prefix but output_root does
-            agg_metrics_path = f"s3://{huc_path.rstrip('/')}/{huc_code}__agg_metrics.csv"
+            # Handle case where stac_item_path doesn't have s3:// prefix but output_root does
+            agg_metrics_path = f"s3://{stac_item_path.rstrip('/')}/{stac_item_code}__agg_metrics.csv"
         else:
-            agg_metrics_path = str(Path(huc_path) / f"{huc_code}__agg_metrics.csv")
+            agg_metrics_path = str(Path(stac_item_path) / f"{stac_item_code}__agg_metrics.csv")
 
         df = read_agg_metrics(agg_metrics_path)
 
         if df is not None and not df.empty:
             # Add new columns
-            df.insert(0, "huc", huc_code)
             df["calibrated"] = "True" if calb else "False"
             df["version"] = hand_version
             df["resolution_m"] = resolution
@@ -110,9 +109,9 @@ def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolutio
             df["full_json_path"] = "null"
 
             all_metrics.append(df)
-            logger.info(f"Processed {len(df)} rows from HUC {huc_code}")
+            logger.info(f"Processed {len(df)} rows from STAC item {stac_item_code}")
         else:
-            logger.warning(f"No valid data found for HUC {huc_code}")
+            logger.warning(f"No valid data found for STAC item {stac_item_code}")
 
     if not all_metrics:
         logger.warning("No valid agg_metrics.csv files were found")
@@ -120,17 +119,17 @@ def aggregate_metrics(output_root: str, calb: bool, hand_version: str, resolutio
 
     # Combine all DataFrames
     combined_df = pd.concat(all_metrics, ignore_index=True)
-    logger.info(f"Combined {len(combined_df)} total rows from {len(all_metrics)} HUCs")
+    logger.info(f"Combined {len(combined_df)} total rows from {len(all_metrics)} STAC items")
 
     return combined_df
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Aggregate agg_metrics.csv files from multiple HUCs into a master_metrics.csv file"
+        description="Aggregate agg_metrics.csv files from multiple STAC items into a master_metrics.csv file"
     )
 
-    parser.add_argument("output_root", help="Root directory containing HUC subdirectories (can be S3 path)")
+    parser.add_argument("output_root", help="Root directory containing STAC item subdirectories (can be S3 path)")
 
     parser.add_argument("--calb", action="store_true", help="Set calibration flag to True (default: False)")
 
