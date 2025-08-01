@@ -141,44 +141,62 @@ class NomadPurger:
             logger.error(f"Failed to purge job {job_id}: {e}")
             return False
 
-    async def purge_all_dispatch_jobs(self, parent_job_names: List[str], dry_run: bool = False) -> tuple[int, int]:
-        """Purge all dispatch jobs for the given parent jobs with maximum concurrency."""
+    async def purge_all_dispatch_jobs(
+        self, parent_job_names: List[str], dry_run: bool = False, batch_size: int = 5, batch_delay: float = 1.0
+    ) -> tuple[int, int]:
+        """Purge all dispatch jobs for the given parent jobs with rate limiting."""
         dispatch_jobs = await self.get_all_dispatch_jobs(parent_job_names)
 
         if not dispatch_jobs:
             logger.info("No dispatch jobs found to purge")
             return 0, 0
 
-        logger.info(f"Starting to purge {len(dispatch_jobs)} dispatch jobs with maximum concurrency")
+        logger.info(f"Starting to purge {len(dispatch_jobs)} dispatch jobs in batches of {batch_size}")
 
         successful = 0
         failed = 0
 
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(limit=100),  # Increase connection pool
+            connector=aiohttp.TCPConnector(limit=10),  # Increase connection pool
             timeout=aiohttp.ClientTimeout(total=30),
         ) as session:
+            # Create a semaphore to limit concurrent operations
+            semaphore = asyncio.Semaphore(batch_size)
 
             async def purge_single_job(job):
-                job_id = job.get("ID", "unknown")
-                success = await self.purge_job(session, job_id, dry_run)
-                return job_id, success
+                async with semaphore:
+                    job_id = job.get("ID", "unknown")
+                    success = await self.purge_job(session, job_id, dry_run)
+                    return job_id, success
 
-            # Execute all purge operations concurrently without semaphore for max speed
-            tasks = [purge_single_job(job) for job in dispatch_jobs]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            # Process jobs in batches
+            for i in range(0, len(dispatch_jobs), batch_size):
+                batch = dispatch_jobs[i : i + batch_size]
+                batch_num = i // batch_size + 1
+                total_batches = (len(dispatch_jobs) + batch_size - 1) // batch_size
 
-            # Count results
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Task failed with exception: {result}")
-                    failed += 1
-                else:
-                    job_id, success = result
-                    if success:
-                        successful += 1
-                    else:
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} jobs)")
+
+                # Execute batch concurrently
+                tasks = [purge_single_job(job) for job in batch]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # Count results
+                for result in results:
+                    if isinstance(result, Exception):
+                        logger.error(f"Task failed with exception: {result}")
                         failed += 1
+                    else:
+                        job_id, success = result
+                        if success:
+                            successful += 1
+                        else:
+                            failed += 1
+
+                # Add delay between batches to avoid overwhelming the server
+                if i + batch_size < len(dispatch_jobs) and batch_delay > 0:
+                    logger.debug(f"Waiting {batch_delay} seconds before next batch...")
+                    await asyncio.sleep(batch_delay)
 
         logger.info(f"Purge complete: {successful} successful, {failed} failed")
         return successful, failed
@@ -230,6 +248,10 @@ Default pipeline jobs: {', '.join(PIPELINE_JOBS)}
     )
     parser.add_argument("--dry-run", action="store_true", help="Show what would be purged without actually doing it")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
+    parser.add_argument("--batch-size", type=int, default=50, help="Number of jobs to purge concurrently (default: 5)")
+    parser.add_argument(
+        "--batch-delay", type=float, default=0.2, help="Delay in seconds between batches (default: 1.0)"
+    )
 
     args = parser.parse_args()
 
@@ -251,7 +273,9 @@ Default pipeline jobs: {', '.join(PIPELINE_JOBS)}
     )
 
     try:
-        successful, failed = await purger.purge_all_dispatch_jobs(target_jobs, dry_run=args.dry_run)
+        successful, failed = await purger.purge_all_dispatch_jobs(
+            target_jobs, dry_run=args.dry_run, batch_size=args.batch_size, batch_delay=args.batch_delay
+        )
 
         if failed > 0:
             logger.error(f"Some operations failed: {successful} successful, {failed} failed")

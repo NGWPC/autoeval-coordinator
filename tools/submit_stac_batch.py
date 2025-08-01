@@ -322,13 +322,6 @@ def main():
             # Wait before checking again
             time.sleep(60)  # Check every minute
 
-    logging.info(f"\nCleaning up S3 AOI directory: {s3_base}")
-    try:
-        s3_fs.rm(s3_base, recursive=True)
-        logging.info("Successfully cleaned up S3 AOI files")
-    except Exception as e:
-        logging.warning(f"Failed to cleanup S3 directory: {e}")
-
     return 0 if not failed_submissions else 1
 
 
