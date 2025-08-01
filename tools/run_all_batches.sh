@@ -102,7 +102,7 @@ for resolution in "${RESOLUTIONS[@]}"; do
     # Generate batch analysis reports
     echo "--- Generating Batch Reports for ${resolution}m ---"
     reports_output_dir="../reports/$batch_name"
-    reports_cmd="python tools/batch_run_reports.py --batch_name $batch_name --output_dir $reports_output_dir --pipeline_log_group /aws/ec2/nomad-client-linux-test --job_log_group /aws/ec2/nomad-client-linux-test --s3_output_root $output_root --html"
+    reports_cmd="python tools/batch_run_reports.py --batch_name $batch_name --output_dir $reports_output_dir --pipeline_log_group /aws/ec2/nomad-client-linux-test --job_log_group /aws/ec2/nomad-client-linux-test --s3_output_root $output_root --aoi_list $item_list_file --html"
     
     if confirm_command "$reports_cmd"; then
         echo "Executing batch_run_reports.py..."
