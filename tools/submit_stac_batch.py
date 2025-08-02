@@ -23,6 +23,7 @@ def submit_pipeline_job(
     benchmark_sources: str,
     nomad_token: Optional[str] = None,
     use_local_creds: bool = False,
+    max_retries: int = 2,
 ) -> str:
     """
     Submit a pipeline job for a single STAC item.
@@ -55,16 +56,28 @@ def submit_pipeline_job(
     # Create the id_prefix_template in the format [batch_name=value,aoi_name=value]
     id_prefix_template = f"[batch_name={batch_name},aoi_name={item_id}]"
 
-    try:
-        result = nomad_client.job.dispatch_job(
-            id_="pipeline", payload=None, meta=meta, id_prefix_template=id_prefix_template
-        )
+    last_exception = None
+    for attempt in range(max_retries + 1):
+        try:
+            result = nomad_client.job.dispatch_job(
+                id_="pipeline", payload=None, meta=meta, id_prefix_template=id_prefix_template
+            )
 
-        return result["DispatchedJobID"]
+            if attempt > 0:
+                logging.info(f"Successfully submitted job for STAC item {item_id} on attempt {attempt + 1}")
+            
+            return result["DispatchedJobID"]
 
-    except Exception as e:
-        logging.error(f"Failed to dispatch job for STAC item {item_id}: {e}")
-        raise
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries:
+                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s
+                logging.warning(f"Failed to dispatch job for STAC item {item_id} (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logging.error(f"Failed to dispatch job for STAC item {item_id} after {max_retries + 1} attempts: {e}")
+
+    raise last_exception
 
 
 def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
