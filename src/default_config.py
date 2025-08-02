@@ -40,3 +40,4 @@ FLOW_SCENARIOS_OUTPUT_DIR = "combined_flowfiles"
 # General defaults
 FIM_TYPE = "extent"
 HTTP_CONNECTION_LIMIT = 100
+NOMAD_MAX_CONCURRENT_DISPATCH = 8  # Slightly below urllib3's default pool size of 10

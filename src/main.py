@@ -372,6 +372,7 @@ if __name__ == "__main__":
                 token=cfg.nomad.token,
                 session=session,
                 log_db=log_db,
+                max_concurrent_dispatch=cfg.defaults.nomad_max_concurrent_dispatch,
             )
             await nomad.start()
 

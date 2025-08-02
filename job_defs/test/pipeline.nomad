@@ -98,7 +98,7 @@ job "pipeline" {
         
         # STAC Configuration
         STAC_API_URL            = "http://benchmark-stac.test.nextgenwaterprediction.com:8000/" # Using production STAC API for test
-        STAC_OVERLAP_THRESHOLD_PERCENT = "80.0" # set high when doing evals per STAC item. Only want one STAC item per eval
+        STAC_OVERLAP_THRESHOLD_PERCENT = "90.0" # set high when doing evals per STAC item. Only want one STAC item per eval
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         
         # Job Names for dispatching child jobs
