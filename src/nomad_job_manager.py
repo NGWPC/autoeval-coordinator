@@ -77,7 +77,7 @@ class NomadJobManager:
         token: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
         log_db: Optional[Any] = None,
-        max_concurrent_dispatch: int = 8,
+        max_concurrent_dispatch: int = 3,
     ):
         self.nomad_addr = nomad_addr
         self.namespace = namespace
@@ -134,7 +134,9 @@ class NomadJobManager:
     async def _nomad_call(self, func, *args, **kwargs):
         """Execute a Nomad API call with retry logic and concurrency limiting."""
         async with self._api_semaphore:
-            logger.debug(f"Nomad API call: {func.__name__} (semaphore: {self._api_semaphore._value}/{self.max_concurrent_dispatch})")
+            logger.debug(
+                f"Nomad API call: {func.__name__} (semaphore: {self._api_semaphore._value}/{self.max_concurrent_dispatch})"
+            )
             return await asyncio.to_thread(func, *args, **kwargs)
 
     async def dispatch_and_track(
@@ -242,7 +244,7 @@ class NomadJobManager:
             "index": self._event_index,
             "namespace": self.namespace,
         }
-        
+
         headers = {}
         if self.token:
             headers["X-Nomad-Token"] = self.token

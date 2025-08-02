@@ -29,7 +29,7 @@ job "hand_inundator" {
     }
 
     restart {
-      attempts = 4        # Try 4 times on the same node
+      attempts = 2        # Try 2 times on the same node
       interval = "10m"    # Within a 10 minute window
       delay    = "45s"    # Wait 45s between attempts
       mode     = "fail"   # Fail after attempts exhausted
