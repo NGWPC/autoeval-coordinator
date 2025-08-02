@@ -77,7 +77,7 @@ class NomadJobManager:
         token: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
         log_db: Optional[Any] = None,
-        max_concurrent_dispatch: int = 3,
+        max_concurrent_dispatch: int = 2,
     ):
         self.nomad_addr = nomad_addr
         self.namespace = namespace

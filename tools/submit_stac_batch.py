@@ -3,8 +3,9 @@ import logging
 import os
 import sys
 import time
+from functools import wraps
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Callable, Any
 from urllib.parse import urlparse
 
 import fsspec
@@ -13,6 +14,44 @@ import nomad
 from extract_stac_geometries import extract_geometry_by_stac_id, should_use_convex_hull
 
 
+def retry_with_backoff(max_retries: int = 2, backoff_base: float = 2.0):
+    """
+    Decorator to add retry logic with exponential backoff to functions.
+    
+    Args:
+        max_retries: Maximum number of retry attempts (default: 2)
+        backoff_base: Base for exponential backoff calculation (default: 2.0)
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs) -> Any:
+            last_exception = None
+            func_name = func.__name__
+            
+            for attempt in range(max_retries + 1):
+                try:
+                    result = func(*args, **kwargs)
+                    
+                    if attempt > 0:
+                        logging.info(f"Function {func_name} succeeded on attempt {attempt + 1}")
+                    
+                    return result
+                    
+                except Exception as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        wait_time = backoff_base ** attempt
+                        logging.warning(f"Function {func_name} failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)
+                    else:
+                        logging.error(f"Function {func_name} failed after {max_retries + 1} attempts: {e}")
+            
+            raise last_exception
+        return wrapper
+    return decorator
+
+
+@retry_with_backoff(max_retries=2)
 def submit_pipeline_job(
     nomad_client: nomad.Nomad,
     item_id: str,
@@ -23,7 +62,6 @@ def submit_pipeline_job(
     benchmark_sources: str,
     nomad_token: Optional[str] = None,
     use_local_creds: bool = False,
-    max_retries: int = 2,
 ) -> str:
     """
     Submit a pipeline job for a single STAC item.
@@ -56,30 +94,14 @@ def submit_pipeline_job(
     # Create the id_prefix_template in the format [batch_name=value,aoi_name=value]
     id_prefix_template = f"[batch_name={batch_name},aoi_name={item_id}]"
 
-    last_exception = None
-    for attempt in range(max_retries + 1):
-        try:
-            result = nomad_client.job.dispatch_job(
-                id_="pipeline", payload=None, meta=meta, id_prefix_template=id_prefix_template
-            )
+    result = nomad_client.job.dispatch_job(
+        id_="pipeline", payload=None, meta=meta, id_prefix_template=id_prefix_template
+    )
 
-            if attempt > 0:
-                logging.info(f"Successfully submitted job for STAC item {item_id} on attempt {attempt + 1}")
-            
-            return result["DispatchedJobID"]
-
-        except Exception as e:
-            last_exception = e
-            if attempt < max_retries:
-                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s
-                logging.warning(f"Failed to dispatch job for STAC item {item_id} (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {wait_time} seconds...")
-                time.sleep(wait_time)
-            else:
-                logging.error(f"Failed to dispatch job for STAC item {item_id} after {max_retries + 1} attempts: {e}")
-
-    raise last_exception
+    return result["DispatchedJobID"]
 
 
+@retry_with_backoff(max_retries=2)
 def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
     """
     Get the count of running and queued pipeline jobs, including dispatched jobs waiting for allocation.
@@ -87,27 +109,23 @@ def get_running_pipeline_jobs(nomad_client: nomad.Nomad) -> int:
     Returns:
         Number of pipeline jobs in active states (not finished)
     """
-    try:
-        # Get all jobs to include dispatched jobs that haven't been allocated yet
-        jobs = nomad_client.jobs.get_jobs()
-        pipeline_jobs = [job for job in jobs if job.get("ID", "").startswith("pipeline")]
+    # Get all jobs to include dispatched jobs that haven't been allocated yet
+    jobs = nomad_client.jobs.get_jobs()
+    pipeline_jobs = [job for job in jobs if job.get("ID", "").startswith("pipeline")]
 
-        running_count = 0
-        for job in pipeline_jobs:
-            job_status = job.get("Status", "")
-            # Debug logging to see actual job statuses
-            logging.debug(f"Pipeline job {job.get('ID', 'unknown')}: Status={job_status}")
+    running_count = 0
+    for job in pipeline_jobs:
+        job_status = job.get("Status", "")
+        # Debug logging to see actual job statuses
+        logging.debug(f"Pipeline job {job.get('ID', 'unknown')}: Status={job_status}")
 
-            # Count jobs that are not finished (dead = finished)
-            # "running" includes both allocated jobs and dispatched jobs waiting for allocation
-            if job_status != "dead":
-                running_count += 1
+        # Count jobs that are not finished (dead = finished)
+        # "running" includes both allocated jobs and dispatched jobs waiting for allocation
+        if job_status != "dead":
+            running_count += 1
 
-        logging.debug(f"Found {running_count} active pipeline jobs out of {len(pipeline_jobs)} total pipeline jobs")
-        return running_count
-    except Exception as e:
-        logging.warning(f"Failed to get running job count: {e}")
-        return 0
+    logging.debug(f"Found {running_count} active pipeline jobs out of {len(pipeline_jobs)} total pipeline jobs")
+    return running_count
 
 
 def extract_items(
