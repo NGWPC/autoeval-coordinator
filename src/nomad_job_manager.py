@@ -77,12 +77,14 @@ class NomadJobManager:
         token: Optional[str] = None,
         session: Optional[aiohttp.ClientSession] = None,
         log_db: Optional[Any] = None,
+        max_concurrent_dispatch: int = 8,
     ):
         self.nomad_addr = nomad_addr
         self.namespace = namespace
         self.token = token
         self.session = session
         self.log_db = log_db
+        self.max_concurrent_dispatch = max_concurrent_dispatch
 
         parsed = urlparse(str(nomad_addr))
         self.client = nomad.Nomad(
@@ -92,6 +94,10 @@ class NomadJobManager:
             token=token or None,
             namespace=namespace or None,
         )
+
+        # Create semaphore to limit concurrent Nomad API calls
+        self._api_semaphore = asyncio.Semaphore(max_concurrent_dispatch)
+        logger.info(f"Nomad API concurrency limited to {max_concurrent_dispatch} calls")
 
         # Track active jobs
         self._active_jobs: Dict[str, JobTracker] = {}
@@ -126,8 +132,10 @@ class NomadJobManager:
 
     @_nomad_retry
     async def _nomad_call(self, func, *args, **kwargs):
-        """Execute a Nomad API call with retry logic."""
-        return await asyncio.to_thread(func, *args, **kwargs)
+        """Execute a Nomad API call with retry logic and concurrency limiting."""
+        async with self._api_semaphore:
+            logger.debug(f"Nomad API call: {func.__name__} (semaphore: {self._api_semaphore._value}/{self.max_concurrent_dispatch})")
+            return await asyncio.to_thread(func, *args, **kwargs)
 
     async def dispatch_and_track(
         self,
