@@ -1,6 +1,7 @@
 .venv/
 __pycache__/
 pipeline_config.yml
+reports/
 config/pipeline_config.yml
 config/local_pipeline_config.yml
 config/docker_pipeline_config.yml
