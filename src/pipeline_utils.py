@@ -42,7 +42,7 @@ class PathFactory:
 
         # Use provided outputs_path (local or S3) - this should already include the HUC directory
         if outputs_path.startswith("s3://"):
-            self.base = outputs_path.rstrip('/')
+            self.base = outputs_path.rstrip("/")
         else:
             # Local path
             self.base = str(Path(outputs_path))
@@ -92,8 +92,8 @@ class PathFactory:
         """Generate path for pipeline logs: base/{aoi}__logs.txt"""
         filename = f"{self.aoi_name}__logs.txt"
         return f"{self.base}/{filename}"
-    
-    def metrics_path(self) -> str:
+
+    def results_path(self) -> str:
         """Generate path for aggregated results: base/{aoi}__agg_metrics.csv"""
         filename = f"{self.aoi_name}__agg_metrics.csv"
         return f"{self.base}/{filename}"
