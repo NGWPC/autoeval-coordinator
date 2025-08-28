@@ -18,13 +18,20 @@ job "fim_mosaicker" {
       "aws_access_key",
       "aws_secret_key",
       "aws_session_token",
+      "clip_geometry_path",
     ]
   }
 
   group "mosaicker-processor" {
+
+    reschedule {
+      attempts = 0 # this needs to only be 0 re-attempts or will mess up pipeline job tracking
+    }
+
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 3        # Try N times on the same node
+      delay    = "15s"    # Wait between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "processor" {
@@ -40,7 +47,8 @@ job "fim_mosaicker" {
         # Mount local test data and output directory
         volumes = [
           "${var.repo_root}/testdata:/testdata:ro",
-          "/tmp/autoeval-outputs:/outputs:rw"
+          "/tmp/autoeval-outputs:/outputs:rw",
+          "${var.repo_root}/local-batches:/local-batches:rw"
         ]
 
         command = "python3"
@@ -49,6 +57,7 @@ job "fim_mosaicker" {
           "--raster_paths", "${NOMAD_META_raster_paths}",
           "--mosaic_output_path", "${NOMAD_META_output_path}",
           "--fim_type", "${NOMAD_META_fim_type}",
+          "--clip_geometry_path", "${NOMAD_META_clip_geometry_path}",
         ]
 
       }
@@ -58,7 +67,6 @@ job "fim_mosaicker" {
         AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
         AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
-        GDAL_CACHEMAX         = "1024"
         
         # GDAL Configuration
         GDAL_NUM_THREADS = "1"
@@ -66,7 +74,9 @@ job "fim_mosaicker" {
         GDAL_DISABLE_READDIR_ON_OPEN = "TRUE"
         CPL_LOG_ERRORS = "ON"
         CPL_VSIL_CURL_ALLOWED_EXTENSIONS = ".tif,.vrt"
-        VSI_CACHE_SIZE = "268435456"
+        VSI_CACHE_SIZE = "512000000" # s3 data cache size
+        GDAL_SWATH_SIZE = "512000000"  # swath size for translate operations
+        GDAL_CACHEMAX = "2048"
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Output Configuration
@@ -83,8 +93,6 @@ job "fim_mosaicker" {
       }
 
       resources {
-        cpu    = 1000 
-        # set small here for github runner test (8gb total memory)
         memory = 4000 
       }
 

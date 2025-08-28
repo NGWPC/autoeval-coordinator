@@ -2,6 +2,11 @@ job "agreement_maker" {
   datacenters = ["dc1"] 
   type        = "batch"
 
+  constraint {
+    attribute = "${node.class}"
+    value     = "linux"
+  }
+
   parameterized {
     meta_required = [
       "candidate_path", 
@@ -20,10 +25,14 @@ job "agreement_maker" {
   }
 
   group "agreement-processor" {
-    # Don't attempt restart since don't want to retry on most errors
+    reschedule {
+      attempts = 0 # this needs to only be 0 re-attempts or will mess up pipeline job tracking
+    }
+
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 3        # Try N times on the same node
+      delay    = "15s"    # Wait between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "processor" {
@@ -31,7 +40,8 @@ job "agreement_maker" {
 
       config {
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-gval-v0.2" 
-        force_pull = true
+        force_pull = false
+        # force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
 
         auth {
           username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
@@ -45,15 +55,24 @@ job "agreement_maker" {
           "--benchmark_path", "${NOMAD_META_benchmark_path}",
           "--output_path", "${NOMAD_META_output_path}",
           "--metrics_path", "${NOMAD_META_metrics_path}",
-          "--clip_geoms", "${NOMAD_META_clip_geoms}",
+          "--mask_dict", "s3://fimc-data/autoeval/test_data/mask_areas.json",
         ]
 
+        logging {
+          type = "awslogs"
+          config {
+            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
+            awslogs-region       = "us-east-1"
+            awslogs-stream       = "${NOMAD_JOB_ID}"
+            awslogs-create-group = "true"
+          }
+        }
       }
 
       env {
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
         AWS_DEFAULT_REGION = "us-east-1"
         GDAL_CACHEMAX         = "1024"
         
@@ -67,9 +86,9 @@ job "agreement_maker" {
         CPL_VSIL_USE_TEMP_FILE_FOR_RANDOM_WRITE = "YES"
         
         # Processing Configuration
-        DASK_CLUST_MAX_MEM = "12GB"
-        RASTERIO_CHUNK_SIZE = "4096"
-        DEFAULT_WRITE_BLOCK_SIZE = "4096"
+        DASK_CLUST_MAX_MEM = "30GB"
+        RASTERIO_CHUNK_SIZE = "2048"
+        DEFAULT_WRITE_BLOCK_SIZE = "1024"
         COG_BLOCKSIZE = "512"
         COG_OVERVIEW_LEVEL = "4"
         
@@ -84,7 +103,7 @@ job "agreement_maker" {
       }
 
       resources {
-        memory = 12000 # Higher memory for large raster processing
+        memory = 30500 # Higher memory for large raster processing. This should be DASK_CLUST_MAX_MEM + a bit more. Setting this to a bit higher than the max memory usage seen from agreement job while processing ripple data. For 10m this should be ~12gb, for 5m 18-20 gb, and for 3m 25-30gb
       }
 
       logs {
