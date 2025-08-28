@@ -3,10 +3,12 @@ import tempfile
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+import boto3
 import duckdb
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Polygon
+from shapely.wkb import loads
 from shapely.wkt import dumps
 
 logger = logging.getLogger(__name__)
@@ -14,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 class HandIndexQuerier:
     """
-    A class for querying HAND index data from partitioned parquet files.
+    A class for querying HAND index data from parquet files.
     Provides spatial intersection and filtering capabilities.
     """
 
@@ -23,12 +25,14 @@ class HandIndexQuerier:
         Initialize the HandIndexQuerier.
 
         Args:
-            partitioned_base_path: Base path to partitioned parquet files (local or s3://)
+            partitioned_base_path: Base path to parquet files (local or s3://)
             overlap_threshold_percent: Minimum overlap percentage to keep a catchment
         """
         self.partitioned_base_path = partitioned_base_path
         self.overlap_threshold_percent = overlap_threshold_percent
         self.con = None
+        self.credentials = boto3.Session().get_credentials()
+        self.s3_region = boto3.Session().region_name
 
     def _ensure_connection(self):
         """Ensure DuckDB connection is established with required extensions."""
@@ -43,14 +47,41 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
+                
+                # Try using DuckDB's credential chain provider instead of manual credentials
+                # This should work better with temporary credentials
+                try:
+                    self.con.execute(f"""
+                    CREATE SECRET s3_secret (
+                        TYPE S3,
+                        PROVIDER CREDENTIAL_CHAIN,
+                        REGION '{self.s3_region or 'us-east-1'}'
+                    );
+                    """)
+                    logger.info("Using DuckDB credential chain for S3 access")
+                except duckdb.Error as cred_chain_error:
+                    logger.warning(f"Credential chain failed, falling back to manual credentials: {cred_chain_error}")
+                    # Fallback to manual credential setting
+                    self.con.execute(f"SET s3_region = '{self.s3_region or 'us-east-1'}';")
+                    if self.credentials:
+                        if self.credentials.access_key:
+                            self.con.execute(f"SET s3_access_key_id='{self.credentials.access_key}';")
+                        if self.credentials.secret_key:
+                            self.con.execute(f"SET s3_secret_access_key='{self.credentials.secret_key}';")
+                        if self.credentials.token:
+                            self.con.execute(f"SET s3_session_token='{self.credentials.token}';")
+                
+                self.con.execute("SET memory_limit = '7GB';")
+                self.con.execute("SET temp_directory = '/tmp';")
+
             except duckdb.Error as e:
                 logger.warning("Could not load DuckDB extensions: %s", e)
 
-            # Create partitioned views
-            self._create_partitioned_views()
+            # Create views
+            self._create_views()
 
-    def _create_partitioned_views(self):
-        """Create views for partitioned tables."""
+    def _create_views(self):
+        """Create views for non-partitioned tables."""
         base_path = self.partitioned_base_path
         if not base_path.endswith("/"):
             base_path += "/"
@@ -59,13 +90,13 @@ class HandIndexQuerier:
         CREATE OR REPLACE VIEW catchments_partitioned AS
         SELECT * FROM read_parquet('{base_path}catchments/*/*.parquet', hive_partitioning = 1);
         
-        CREATE OR REPLACE VIEW hydrotables_partitioned AS
-        SELECT * FROM read_parquet('{base_path}hydrotables/*/*.parquet', hive_partitioning = 1);
+        CREATE OR REPLACE VIEW hydrotables AS
+        SELECT * FROM read_parquet('{base_path}hydrotables.parquet');
         
-        CREATE OR REPLACE VIEW hand_rem_rasters_partitioned AS
+        CREATE OR REPLACE VIEW hand_rem_rasters AS
         SELECT * FROM read_parquet('{base_path}hand_rem_rasters.parquet');
         
-        CREATE OR REPLACE VIEW hand_catchment_rasters_partitioned AS
+        CREATE OR REPLACE VIEW hand_catchment_rasters AS
         SELECT * FROM read_parquet('{base_path}hand_catchment_rasters.parquet');
         """
 
@@ -91,9 +122,9 @@ class HandIndexQuerier:
           SELECT
             c.catchment_id,
             c.geometry,
-            c.h3_partition_key
+            c.h3_index
           FROM catchments_partitioned c
-          JOIN transformed_query tq ON ST_Intersects(c.geometry, tq.query_geom)
+          JOIN transformed_query tq ON ST_Intersects(ST_GeomFromWKB(c.geometry), tq.query_geom)
         )
         """
 
@@ -136,7 +167,7 @@ class HandIndexQuerier:
             + """
         SELECT
           fc.catchment_id,
-          ST_AsWKB(fc.geometry) AS geom_wkb
+          fc.geometry AS geom_wkb
         FROM filtered_catchments AS fc;
         """
         )
@@ -146,28 +177,27 @@ class HandIndexQuerier:
             empty_gdf = gpd.GeoDataFrame(columns=["catchment_id", "geometry"], geometry="geometry", crs="EPSG:5070")
             return empty_gdf, pd.DataFrame(), query_poly_5070
 
-        # Decode WKB → shapely geometries
-        wkb_series = geom_df["geom_wkb"].apply(lambda x: bytes(x) if isinstance(x, bytearray) else x)
+        # Convert WKB data to Shapely geometry objects. Wrapping wkb in bytes because duckdb exports a bytearray but shapely wants bytes.
+        geom_df["geometry"] = geom_df["geom_wkb"].apply(lambda wkb: loads(bytes(wkb)) if wkb is not None else None)
         geometries_gdf = gpd.GeoDataFrame(
-            geom_df[["catchment_id"]],
-            geometry=gpd.GeoSeries.from_wkb(wkb_series, crs="EPSG:5070"),
+            geom_df[["catchment_id", "geometry"]],
+            geometry="geometry",
             crs="EPSG:5070",
         )
 
-        # Build and run the attribute query using partitioned tables
+        # Build and run the attribute query using non-partitioned tables
         sql_attr = (
             cte
             + """
         SELECT
           fc.catchment_id,
-          h.* EXCLUDE (catchment_id, h3_partition_key),
-          hrr.rem_raster_id,
+          h.csv_path,
           hrr.raster_path AS rem_raster_path,
           hcr.raster_path AS catchment_raster_path
         FROM filtered_catchments AS fc
-        LEFT JOIN hydrotables_partitioned AS h ON fc.catchment_id = h.catchment_id
-        LEFT JOIN hand_rem_rasters_partitioned AS hrr ON fc.catchment_id = hrr.catchment_id
-        LEFT JOIN hand_catchment_rasters_partitioned AS hcr ON hrr.rem_raster_id = hcr.rem_raster_id;
+        LEFT JOIN hydrotables AS h ON fc.catchment_id = h.catchment_id
+        LEFT JOIN hand_rem_rasters AS hrr ON fc.catchment_id = hrr.catchment_id
+        LEFT JOIN hand_catchment_rasters AS hcr ON fc.catchment_id = hcr.catchment_id;
         """
         )
         attributes_df = self.con.execute(sql_attr).fetch_df()
@@ -274,12 +304,6 @@ class HandIndexQuerier:
 
             for catch_id, group in filtered_attrs.groupby("catchment_id"):
                 df = group.drop(columns=["catchment_id"]).copy()
-
-                # Convert UUID columns to strings for Parquet compatibility
-                uuid_columns = ["rem_raster_id", "catchment_raster_id"]
-                for col in uuid_columns:
-                    if col in df.columns:
-                        df[col] = df[col].astype(str)
 
                 out_path = outdir / f"{catch_id}.parquet"
                 df.to_parquet(str(out_path), index=False)
