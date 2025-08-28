@@ -1,14 +1,21 @@
 import asyncio
 import logging
+import random
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List
 
 from pydantic import BaseModel, field_serializer
 
 from load_config import AppConfig
+from nomad_job_manager import NomadError
 from pipeline_utils import PathFactory, PipelineResult
 
 logger = logging.getLogger(__name__)
+
+
+def stagger_delay() -> float:
+    """Generate a random delay for job submission staggering."""
+    return random.uniform(0.1, 2)
 
 
 class DispatchMetaBase(BaseModel):
@@ -158,9 +165,16 @@ class InundationStage(PipelineStage):
                 )
                 result.set_path("inundation", f"catchment_{catch_id}", output_path)
 
-                task = asyncio.create_task(self._process_catchment(result, catch_id, catchment_info, output_path))
+                task = asyncio.create_task(
+                    self._process_catchment(
+                        result, catch_id, catchment_info, output_path
+                    )
+                )
                 tasks.append(task)
                 task_metadata.append((result, catch_id, output_path))
+
+                # stagger delay to spread load on Nomad
+                await asyncio.sleep(stagger_delay())
 
         task_results = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -279,6 +293,9 @@ class MosaicStage(PipelineStage):
             )
             hand_tasks.append(hand_task)
 
+            # stagger delay to spread load on Nomad
+            await asyncio.sleep(stagger_delay())
+
             # Benchmark mosaic
             benchmark_output_path = self.path_factory.benchmark_mosaic_path(
                 result.collection_name, result.scenario_name
@@ -299,6 +316,9 @@ class MosaicStage(PipelineStage):
             )
             benchmark_tasks.append(benchmark_task)
             task_results.append(result)
+
+            # stagger delay to spread load on Nomad
+            await asyncio.sleep(stagger_delay())
 
         if not hand_tasks:
             self.log_stage_complete("Mosaic", 0, len(valid_results))
@@ -378,6 +398,9 @@ class AgreementStage(PipelineStage):
             )
             tasks.append(task)
             task_results.append(result)
+
+            # stagger delay to spread load on Nomad
+            await asyncio.sleep(stagger_delay())
 
         if not tasks:
             self.log_stage_complete("Agreement", 0, len(valid_results))
