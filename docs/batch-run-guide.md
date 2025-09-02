@@ -30,8 +30,8 @@ The batch run script needs access to the S3 bucket the pipelines will output dat
 Start the autoeval container by running the following from the repo root:
 
 ```
-docker compose up -d
-docker compose exec autoeval-dev bash
+docker compose -f docker-compose-dev.yml up -d
+docker compose -f docker-compose-dev.yml exec autoeval-dev bash
 ```
 
 You should execute the batch code from this container's shell.
