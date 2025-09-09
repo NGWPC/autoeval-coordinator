@@ -1,17 +1,18 @@
-variable "repo_root" {
-  description = "Path to the repository root directory"
-  type        = string
-}
-
 job "pipeline" {
   datacenters = ["dc1"] 
   type        = "batch"
+
+  constraint {
+    attribute = "${node.class}"
+    value     = "linux"
+  }
 
   parameterized {
     meta_required = [
       "aoi",              
       "outputs_path",     
-      "hand_index_path",  
+      "hand_index_path",
+      "nomad_token",     # Required for test environment
     ]
     meta_optional = [
       "benchmark_sources",# Comma-separated list 
@@ -21,12 +22,12 @@ job "pipeline" {
       "aws_secret_key", 
       "aws_session_token",
       "stac_datetime_filter", 
-      "nomad_token",     # Required for test environment dispatch never used here
       "tags",            # Space-separated list of key=value pairs
     ]
   }
 
   group "pipeline-coordinator" {
+
     # don't reschedule or reattempt a failed pipeline. Just want until the next batch run. This saves on compute and makes it easier to scrape logs for failures.
   
     reschedule {
@@ -41,19 +42,16 @@ job "pipeline" {
       driver = "docker"
 
       config {
-        # Use local development image - must use specific tag (not 'latest')
-        # to prevent Nomad from trying to pull from a registry
-        image = "autoeval-coordinator:local" 
+        image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-coordinator-v0.1"
         force_pull = false
+        # force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
         network_mode = "host"
         
-        # Mount local test data and output directory
-        volumes = [
-          "${var.repo_root}/testdata:/testdata:ro",
-          "/tmp/autoeval-outputs:/outputs:rw",
-          "/tmp:/tmp:rw",
-          "${var.repo_root}/local-batches:/local-batches:rw"
-        ]
+        # Docker registry authentication
+        auth {
+          username = "ReadOnly_NGWPC_Group_Deploy_Token"
+          password = "${NOMAD_META_registry_token}"
+        }
 
         args = [
           "--aoi", "${NOMAD_META_aoi}",
@@ -63,7 +61,17 @@ job "pipeline" {
           "--tags", "${NOMAD_META_tags}",
           # remove this if test cases don't correspond to unique Benchmark STAC items
           "--aoi_is_item",
-          ]
+        ]
+
+        logging {
+          type = "awslogs"
+          config {
+            awslogs-group        = "/aws/ec2/nomad-client-linux-test"
+            awslogs-region       = "us-east-1"
+            awslogs-stream       = "${NOMAD_JOB_ID}"
+            awslogs-create-group = "true"
+          }
+        }
       }
 
       env {
@@ -71,29 +79,28 @@ job "pipeline" {
         NOMAD_PIPELINE_JOB_ID = "${NOMAD_JOB_ID}"
         
         # AWS Configuration
-        AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
-        AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
-        AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
-        AWS_DEFAULT_REGION    = "us-east-1"
-        
+        # Test nomad clients can use IAM
+        AWS_DEFAULT_REGION    = "us-east-1"      
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+
         # Nomad Configuration
-        NOMAD_ADDRESS         = "http://127.0.0.1:4646"
-        NOMAD_TOKEN           = "${NOMAD_TOKEN}" # this will be changed to a meta variable when the test version of the job is created
+        NOMAD_ADDRESS         = "http://nomad-server-test.test.nextgenwaterprediction.com:4646/"
+        NOMAD_TOKEN           = "${NOMAD_META_nomad_token}" # Changed to use meta parameter for test
         NOMAD_NAMESPACE       = "default"
-        NOMAD_REGISTRY_TOKEN  = "${NOMAD_META_registry_token}"
+        NOMAD_REGISTRY_TOKEN        = "${NOMAD_META_registry_token}"
  
         # Pipeline Configuration
         FIM_TYPE              = "extent"
         HTTP_CONNECTION_LIMIT = "100"
         
         # HAND Index Configuration
-        HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = "1.0"
+        HAND_INDEX_OVERLAP_THRESHOLD_PERCENT = "1.0" # Be generous in what gets included here
         
         # STAC Configuration
-        # STAC_API_URL          = "http://127.0.0.1:8888/" # local test api
-        # STAC_API_URL            = "http://127.0.0.1:8082/" # local api that can be used to query full benchmark STAC
-        STAC_API_URL            = "http://benchmark-stac.test.nextgenwaterprediction.com:8000/" # STAC api served from AWS test account that can be used to query full benchmark STAC
-        STAC_OVERLAP_THRESHOLD_PERCENT = "90.0"
+        STAC_API_URL            = "http://benchmark-stac.test.nextgenwaterprediction.com:8000/" # Using production STAC API for test
+        STAC_OVERLAP_THRESHOLD_PERCENT = "90.0" # set high when doing evals per STAC item. Only want one STAC item per eval
         STAC_DATETIME_FILTER  = "${NOMAD_META_stac_datetime_filter}"
         
         # Job Names for dispatching child jobs
@@ -108,7 +115,7 @@ job "pipeline" {
       }
 
       resources {
-        memory = 3000 
+        memory = 3000  
       }
 
       logs {

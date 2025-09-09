@@ -23,10 +23,15 @@ job "hand_inundator" {
   }
 
   group "inundator-processor" {
-    # Don't attempt restart since don't want to retry on most errors
+    reschedule {
+      attempts = 0 # this needs to only be 0 re-attempts or will mess up pipeline job tracking
+    }
+
+    # inundate fails for predictible reasons. Restarting takes alot of time. Will rely on manually querying inundate job failures in AWS console to detect if a batch had inundate failures that were novel.
     restart {
-      attempts = 0
-      mode     = "fail"
+      attempts = 0        # Try N times on the same node
+      delay    = "15s"    # Wait between attempts
+      mode     = "fail"   # Fail after attempts exhausted
     }
 
     task "processor" {
@@ -35,7 +40,8 @@ job "hand_inundator" {
       config {
         # use last known stable version in test
         image = "registry.sh.nextgenwaterprediction.com/ngwpc/fim-c/flows2fim_extents:autoeval-jobs-v0.2" 
-        force_pull = true
+        force_pull = false
+        # force_pull = true # use a cached image on client if available. To force a pull need to change back to force_pull = true
 
         auth {
           username = "ReadOnly_NGWPC_Group_Deploy_Token" # Or your specific username
@@ -63,6 +69,10 @@ job "hand_inundator" {
 
       env {
         AWS_DEFAULT_REGION = "us-east-1"
+        # AWS_ACCESS_KEY_ID     = "${NOMAD_META_aws_access_key}"
+        # AWS_SECRET_ACCESS_KEY = "${NOMAD_META_aws_secret_key}"
+        # AWS_SESSION_TOKEN     = "${NOMAD_META_aws_session_token}"
+
         GDAL_CACHEMAX         = "1024"
         
         # GDAL Configuration
@@ -90,8 +100,7 @@ job "hand_inundator" {
       }
 
       resources {
-        cpu    = 1000 # CPU in MHz (example: 1000 = 1 GHz)
-        memory = 2048 # Memory in MiB 
+        memory = 2000 # Memory in MiB. 
       }
 
       logs {
