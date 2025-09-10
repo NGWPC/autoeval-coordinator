@@ -54,9 +54,7 @@ def setup_arguments():
     return parser.parse_args()
 
 
-def run_query(
-    logs_client, log_group: str, start_time: int, end_time: int, query: str
-) -> List[Dict]:
+def run_query(logs_client, log_group: str, start_time: int, end_time: int, query: str) -> List[Dict]:
     """Runs a CloudWatch Logs Insights query and returns the results."""
     try:
         start_query_response = logs_client.start_query(
@@ -74,16 +72,12 @@ def run_query(
             status = results_response["status"]
 
         if status != "Complete":
-            print(
-                f"Error: Query failed with status '{status}'", file=sys.stderr
-            )
+            print(f"Error: Query failed with status '{status}'", file=sys.stderr)
             return []
 
         results = results_response.get("results", [])
         if len(results) == 10000:
-            print(
-                "  WARNING: Query returned 10,000 results (CloudWatch limit). Results may be incomplete."
-            )
+            print("  WARNING: Query returned 10,000 results (CloudWatch limit). Results may be incomplete.")
 
         return results
     except ClientError as e:
@@ -124,20 +118,14 @@ def main():
     args = setup_arguments()
 
     if not args.run_list.is_file():
-        print(
-            f"Error: Run list file not found: {args.run_list}", file=sys.stderr
-        )
+        print(f"Error: Run list file not found: {args.run_list}", file=sys.stderr)
         sys.exit(1)
 
     # Determine time range
     if args.start_datetime and args.end_datetime:
         try:
-            start_dt = datetime.datetime.strptime(
-                args.start_datetime, "%Y-%m-%d-%H"
-            )
-            end_dt = datetime.datetime.strptime(
-                args.end_datetime, "%Y-%m-%d-%H"
-            ).replace(minute=59, second=59)
+            start_dt = datetime.datetime.strptime(args.start_datetime, "%Y-%m-%d-%H")
+            end_dt = datetime.datetime.strptime(args.end_datetime, "%Y-%m-%d-%H").replace(minute=59, second=59)
             time_range_desc = f"{args.start_datetime} to {args.end_datetime}"
         except ValueError:
             print(
@@ -154,9 +142,7 @@ def main():
     end_time_ts = int(end_dt.timestamp())
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    print(
-        f"Starting analysis for batch: {args.batch_name}\nTime range: {time_range_desc}"
-    )
+    print(f"Starting analysis for batch: {args.batch_name}\nTime range: {time_range_desc}")
 
     log_group = "/aws/ec2/nomad-client-linux-test"
     queries = {
@@ -227,9 +213,7 @@ def main():
     for name, query_template in queries.items():
         print(f"\nRunning query for '{name}' pipelines...")
         query = query_template.format(args.batch_name)
-        results = run_query(
-            logs_client, log_group, start_time_ts, end_time_ts, query
-        )
+        results = run_query(logs_client, log_group, start_time_ts, end_time_ts, query)
 
         # Write intermediate files for this query
         write_data_to_json(args.output_dir / f"{name}_results.json", results)
@@ -243,9 +227,7 @@ def main():
 
     # --- Categorize AOIs using set logic, writing key intermediate sets ---
     print("\nCategorizing all AOIs...")
-    initial_aois = {
-        line.strip() for line in args.run_list.open() if line.strip()
-    }
+    initial_aois = {line.strip() for line in args.run_list.open() if line.strip()}
     write_aois_to_file(args.output_dir / "sorted-run-list.txt", initial_aois)
 
     successful_aois = aoi_sets["success"]
@@ -265,13 +247,9 @@ def main():
     successful_aois -= failed_aois
 
     # AOIs with ignorable errors but no real errors (agr_mos or inundate) should be considered successful
-    real_error_aois = aoi_sets["agr_mos_errors"].union(
-        aoi_sets["inundate_errors"]
-    )
+    real_error_aois = aoi_sets["agr_mos_errors"].union(aoi_sets["inundate_errors"])
     truly_ignorable = aoi_sets["ignorable_errors"] - real_error_aois
-    write_aois_to_file(
-        args.output_dir / "ignorable_errors_aois.txt", truly_ignorable
-    )
+    write_aois_to_file(args.output_dir / "ignorable_errors_aois.txt", truly_ignorable)
     successful_aois.update(truly_ignorable)
     failed_aois -= truly_ignorable
 
@@ -285,18 +263,12 @@ def main():
     print(f"Total processed: {total_output}\n")
 
     # Write final output files
-    write_aois_to_file(
-        args.output_dir / "unique_success_aoi_names.txt", successful_aois
-    )
-    write_aois_to_file(
-        args.output_dir / "unique_fail_aoi_names.txt", failed_aois
-    )
+    write_aois_to_file(args.output_dir / "unique_success_aoi_names.txt", successful_aois)
+    write_aois_to_file(args.output_dir / "unique_fail_aoi_names.txt", failed_aois)
 
     if len(initial_aois) != total_output:
         missing_aois = initial_aois - successful_aois - failed_aois
-        print(
-            f"WARNING: Input count ({len(initial_aois)}) does not match output count ({total_output})!"
-        )
+        print(f"WARNING: Input count ({len(initial_aois)}) does not match output count ({total_output})!")
         print(f"Missing AOIs: {len(missing_aois)}")
         write_aois_to_file(args.output_dir / "missing_aois.txt", missing_aois)
     else:
