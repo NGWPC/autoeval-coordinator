@@ -28,9 +28,7 @@ from tenacity import (
 )
 
 # Add src to path to import config
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src")
-)
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "src"))
 from default_config import (
     AGREEMENT_MAKER_JOB_NAME,
     FIM_MOSAICKER_JOB_NAME,
@@ -77,13 +75,9 @@ class NomadPurger:
     @retry(
         stop=stop_after_attempt(3),
         wait=wait_exponential(multiplier=1, min=1, max=10),
-        retry=retry_if_exception_type(
-            (aiohttp.ClientError, nomad.api.exceptions.BaseNomadException)
-        ),
+        retry=retry_if_exception_type((aiohttp.ClientError, nomad.api.exceptions.BaseNomadException)),
     )
-    async def _api_call(
-        self, session: aiohttp.ClientSession, method: str, path: str, **kwargs
-    ) -> dict:
+    async def _api_call(self, session: aiohttp.ClientSession, method: str, path: str, **kwargs) -> dict:
         """Make a Nomad API call with retry logic."""
         url = urljoin(self.nomad_addr, path)
         headers = kwargs.pop("headers", {})
@@ -95,19 +89,13 @@ class NomadPurger:
         if self.namespace and self.namespace != "default":
             params["namespace"] = self.namespace
 
-        async with session.request(
-            method, url, headers=headers, params=params, **kwargs
-        ) as response:
+        async with session.request(method, url, headers=headers, params=params, **kwargs) as response:
             response.raise_for_status()
             return await response.json()
 
-    async def get_all_dispatch_jobs(
-        self, parent_job_names: List[str]
-    ) -> List[dict]:
+    async def get_all_dispatch_jobs(self, parent_job_names: List[str]) -> List[dict]:
         """Get all dispatch jobs for multiple parent jobs."""
-        logger.info(
-            f"Getting dispatch jobs for parent jobs: {', '.join(parent_job_names)}"
-        )
+        logger.info(f"Getting dispatch jobs for parent jobs: {', '.join(parent_job_names)}")
 
         async with aiohttp.ClientSession() as session:
             try:
@@ -133,9 +121,7 @@ class NomadPurger:
                 logger.error(f"Error getting dispatch jobs: {e}")
                 raise
 
-    async def purge_job(
-        self, session: aiohttp.ClientSession, job_id: str, dry_run: bool = False
-    ) -> bool:
+    async def purge_job(self, session: aiohttp.ClientSession, job_id: str, dry_run: bool = False) -> bool:
         """Purge a single job."""
         try:
             if dry_run:
@@ -145,22 +131,16 @@ class NomadPurger:
             logger.info(f"Purging job: {job_id}")
 
             # Stop and purge the job
-            await self._api_call(
-                session, "DELETE", f"/v1/job/{job_id}", params={"purge": "true"}
-            )
+            await self._api_call(session, "DELETE", f"/v1/job/{job_id}", params={"purge": "true"})
 
             logger.info(f"Successfully purged job: {job_id}")
             return True
 
         except aiohttp.ClientResponseError as e:
             if e.status == 404:
-                logger.warning(
-                    f"Job {job_id} not found (may have already been purged)"
-                )
+                logger.warning(f"Job {job_id} not found (may have already been purged)")
                 return True
-            logger.error(
-                f"Failed to purge job {job_id}: HTTP {e.status} - {e.message}"
-            )
+            logger.error(f"Failed to purge job {job_id}: HTTP {e.status} - {e.message}")
             return False
         except Exception as e:
             logger.error(f"Failed to purge job {job_id}: {e}")
@@ -180,17 +160,13 @@ class NomadPurger:
             logger.info("No dispatch jobs found to purge")
             return 0, 0
 
-        logger.info(
-            f"Starting to purge {len(dispatch_jobs)} dispatch jobs in batches of {batch_size}"
-        )
+        logger.info(f"Starting to purge {len(dispatch_jobs)} dispatch jobs in batches of {batch_size}")
 
         successful = 0
         failed = 0
 
         async with aiohttp.ClientSession(
-            connector=aiohttp.TCPConnector(
-                limit=10
-            ),  # Increase connection pool
+            connector=aiohttp.TCPConnector(limit=10),  # Increase connection pool
             timeout=aiohttp.ClientTimeout(total=30),
         ) as session:
             # Create a semaphore to limit concurrent operations
@@ -206,13 +182,9 @@ class NomadPurger:
             for i in range(0, len(dispatch_jobs), batch_size):
                 batch = dispatch_jobs[i : i + batch_size]
                 batch_num = i // batch_size + 1
-                total_batches = (
-                    len(dispatch_jobs) + batch_size - 1
-                ) // batch_size
+                total_batches = (len(dispatch_jobs) + batch_size - 1) // batch_size
 
-                logger.info(
-                    f"Processing batch {batch_num}/{total_batches} ({len(batch)} jobs)"
-                )
+                logger.info(f"Processing batch {batch_num}/{total_batches} ({len(batch)} jobs)")
 
                 # Execute batch concurrently
                 tasks = [purge_single_job(job) for job in batch]
@@ -232,9 +204,7 @@ class NomadPurger:
 
                 # Add delay between batches to avoid overwhelming the server
                 if i + batch_size < len(dispatch_jobs) and batch_delay > 0:
-                    logger.debug(
-                        f"Waiting {batch_delay} seconds before next batch..."
-                    )
+                    logger.debug(f"Waiting {batch_delay} seconds before next batch...")
                     await asyncio.sleep(batch_delay)
 
         logger.info(f"Purge complete: {successful} successful, {failed} failed")
@@ -292,9 +262,7 @@ Default pipeline jobs: {", ".join(PIPELINE_JOBS)}
         action="store_true",
         help="Show what would be purged without actually doing it",
     )
-    parser.add_argument(
-        "--verbose", "-v", action="store_true", help="Enable verbose logging"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
     parser.add_argument(
         "--batch-size",
         type=int,
@@ -312,9 +280,7 @@ Default pipeline jobs: {", ".join(PIPELINE_JOBS)}
 
     # Configure logging
     log_level = logging.DEBUG if args.verbose else logging.INFO
-    logging.basicConfig(
-        level=log_level, format="%(asctime)s - %(levelname)s - %(message)s"
-    )
+    logging.basicConfig(level=log_level, format="%(asctime)s - %(levelname)s - %(message)s")
 
     # Determine which jobs to target
     if args.job_name:
@@ -340,14 +306,10 @@ Default pipeline jobs: {", ".join(PIPELINE_JOBS)}
         )
 
         if failed > 0:
-            logger.error(
-                f"Some operations failed: {successful} successful, {failed} failed"
-            )
+            logger.error(f"Some operations failed: {successful} successful, {failed} failed")
             sys.exit(1)
         else:
-            logger.info(
-                f"All operations completed successfully: {successful} jobs processed"
-            )
+            logger.info(f"All operations completed successfully: {successful} jobs processed")
 
     except KeyboardInterrupt:
         logger.info("Operation cancelled by user")
