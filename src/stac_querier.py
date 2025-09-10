@@ -66,9 +66,7 @@ def compare_versions(v1: str, v2: str) -> int:
 class Interval:
     start: datetime
     end: datetime
-    assets: Dict[str, List[str]] = field(
-        default_factory=lambda: defaultdict(list)
-    )
+    assets: Dict[str, List[str]] = field(default_factory=lambda: defaultdict(list))
 
 
 class StacQuerier:
@@ -108,20 +106,15 @@ class StacQuerier:
         ]
         self.NWS_USGS_MAGS = ["action", "minor", "moderate", "major"]
         self.NWS_USGS_SPEC = [
-            (re.compile(rf"^{mag}_(extent_raster|flow_file)$"), mag, r"\1")
-            for mag in self.NWS_USGS_MAGS
+            (re.compile(rf"^{mag}_(extent_raster|flow_file)$"), mag, r"\1") for mag in self.NWS_USGS_MAGS
         ]
-        self.RIPPLE_SPEC: List[Tuple[Pattern, str, str]] = [
-            (re.compile(r"^(\d+yr)_extent$"), r"\1", "extents")
-        ]
+        self.RIPPLE_SPEC: List[Tuple[Pattern, str, str]] = [(re.compile(r"^(\d+yr)_extent$"), r"\1", "extents")]
 
         CollectionConfig = Dict[
             str,
             Tuple[
                 Callable[[Any], str],  # grouping fn → group_id
-                Dict[
-                    str, Callable[[str, Any], bool]
-                ],  # asset_type → test(key, asset)
+                Dict[str, Callable[[str, Any], bool]],  # asset_type → test(key, asset)
             ],
         ]
 
@@ -129,28 +122,21 @@ class StacQuerier:
             "gfm-collection": (
                 lambda item: str(item.properties.get("dfo_event_id", item.id)),
                 {
-                    "extents": lambda k, a: k.endswith(
-                        "_Observed_Water_Extent"
-                    ),
+                    "extents": lambda k, a: k.endswith("_Observed_Water_Extent"),
                     "flowfiles": lambda k, a: k.endswith("_flowfile"),
                 },
             ),
             "gfm-expanded-collection": (
                 self._group_gfm_expanded_initial,
                 {
-                    "extents": lambda k, a: k.endswith(
-                        "_Observed_Water_Extent"
-                    ),
-                    "flowfiles": lambda k, a: k.endswith("_flowfile")
-                    or k == "NWM_ANA_flowfile",
+                    "extents": lambda k, a: k.endswith("_Observed_Water_Extent"),
+                    "flowfiles": lambda k, a: k.endswith("_flowfile") or k == "NWM_ANA_flowfile",
                 },
             ),
             "hwm-collection": (
                 lambda item: item.id,
                 {
-                    "points": lambda k, a: k == "data"
-                    and a.media_type
-                    and "geopackage" in a.media_type,
+                    "points": lambda k, a: k == "data" and a.media_type and "geopackage" in a.media_type,
                     "flowfiles": lambda k, a: k.endswith("-flowfile"),
                 },
             ),
@@ -166,9 +152,7 @@ class StacQuerier:
                 logger.error(f"Could not open STAC API: {e}")
                 raise
 
-    def _filter_items_by_geometry(
-        self, items: List[Any], query_polygon: Polygon
-    ) -> List[Any]:
+    def _filter_items_by_geometry(self, items: List[Any], query_polygon: Polygon) -> List[Any]:
         """
         Filter STAC items using geometry relationships similar to HAND query filtering.
 
@@ -214,18 +198,14 @@ class StacQuerier:
 
                 # Compute overlap percentage relative to item's area
                 if not contains_query and not within_query:
-                    intersection_area = item_geom.intersection(
-                        query_polygon
-                    ).area
+                    intersection_area = item_geom.intersection(query_polygon).area
                     item_area = item_geom.area
                     if item_area > 0:
                         overlap_pct = (intersection_area / item_area) * 100
                     else:
                         overlap_pct = 0.0
                 else:
-                    overlap_pct = (
-                        100.0  # Contains or within means 100% relevant
-                    )
+                    overlap_pct = 100.0  # Contains or within means 100% relevant
 
                 # Apply selection criteria
                 if contains_query:
@@ -241,9 +221,7 @@ class StacQuerier:
                     stats["removed_count"] += 1
 
             except Exception as e:
-                logger.warning(
-                    f"Error processing item geometry for {getattr(item, 'id', 'unknown')}: {e}"
-                )
+                logger.warning(f"Error processing item geometry for {getattr(item, 'id', 'unknown')}: {e}")
                 # Include item if geometry processing fails
                 filtered_items.append(item)
 
@@ -287,9 +265,7 @@ class StacQuerier:
         fmt = "%Y-%m-%dT%H:%M:%SZ"
         return f"{start.strftime(fmt)}/{end.strftime(fmt)}"
 
-    def _format_results(
-        self, item_iter: Any
-    ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+    def _format_results(self, item_iter: Any) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
         results = defaultdict(lambda: defaultdict(lambda: defaultdict(list)))
         seen = set()
         ripple_cache: Dict[str, List[str]] = {}
@@ -304,9 +280,7 @@ class StacQuerier:
                 try:
                     source = item.properties.get("source", "")
                     hucs = tuple(item.properties.get("hucs", []))
-                    flows2fim_version = item.properties.get(
-                        "flows2fim_version", ""
-                    )
+                    flows2fim_version = item.properties.get("flows2fim_version", "")
 
                     if source and hucs and flows2fim_version:
                         key = (source, hucs)
@@ -314,10 +288,7 @@ class StacQuerier:
                         # If we haven't seen this source+hucs combo, or this version is better
                         if (
                             key not in ripple_best_items
-                            or compare_versions(
-                                flows2fim_version, ripple_best_items[key][1]
-                            )
-                            > 0
+                            or compare_versions(flows2fim_version, ripple_best_items[key][1]) > 0
                         ):
                             ripple_best_items[key] = (
                                 item.id,
@@ -330,9 +301,7 @@ class StacQuerier:
                             )
                             continue
                 except Exception as e:
-                    logger.warning(
-                        f"Error processing Ripple item {item.id}: {e}"
-                    )
+                    logger.warning(f"Error processing Ripple item {item.id}: {e}")
 
             if item.id in seen:
                 continue
@@ -372,11 +341,7 @@ class StacQuerier:
                 "nws-fim-collection",
                 "usgs-fim-collection",
             ]:
-                specs = (
-                    self.BLE_SPEC
-                    if coll == "ble-collection"
-                    else self.NWS_USGS_SPEC
-                )
+                specs = self.BLE_SPEC if coll == "ble-collection" else self.NWS_USGS_SPEC
 
                 found = set()
                 for k, a in item.assets.items():
@@ -399,10 +364,7 @@ class StacQuerier:
                             "usgs-fim-collection",
                         ]:
                             gauge = item.properties.get("gauge")
-                            if (
-                                gauge
-                                and gauge_info[collection_key][gid] is None
-                            ):
+                            if gauge and gauge_info[collection_key][gid] is None:
                                 gauge_info[collection_key][gid] = gauge
 
                 # Extract hucs for all asset-level collections (BLE, NWS, USGS)
@@ -423,9 +385,7 @@ class StacQuerier:
                             m = re.search(r"flows_(\d+)_yr_", ak)
                             ri = f"{m.group(1)}yr" if m else None
                             if ri and aa.media_type == "text/csv":
-                                logger.info(
-                                    f"Caching Ripple flowfile for {ri}: {aa.href}"
-                                )
+                                logger.info(f"Caching Ripple flowfile for {ri}: {aa.href}")
                                 ripple_cache.setdefault(ri, []).append(aa.href)
                     except Exception as e:
                         logger.warning(f"Ripple cache failed: {e}")
@@ -465,19 +425,10 @@ class StacQuerier:
                     # Extract "100yr" from "SourceA-100yr"
                     base_gid = composite_gid.split("-", 1)[-1]
                     if base_gid in ripple_cache:
-                        logger.info(
-                            f"Adding cached flowfiles for {composite_gid}"
-                        )
+                        logger.info(f"Adding cached flowfiles for {composite_gid}")
                         for href in ripple_cache[base_gid]:
-                            if (
-                                href
-                                not in results[collection_key][composite_gid][
-                                    "flowfiles"
-                                ]
-                            ):
-                                results[collection_key][composite_gid][
-                                    "flowfiles"
-                                ].append(href)
+                            if href not in results[collection_key][composite_gid]["flowfiles"]:
+                                results[collection_key][composite_gid]["flowfiles"].append(href)
 
             # 4) fallback
             else:
@@ -501,11 +452,7 @@ class StacQuerier:
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
-                    if (
-                        "extent" in k
-                        and a.media_type
-                        and "tiff" in a.media_type
-                    ):
+                    if "extent" in k and a.media_type and "tiff" in a.media_type:
                         bkt["extents"].append(a.href)
                     elif "flow" in k and a.media_type and "csv" in a.media_type:
                         bkt["flowfiles"].append(a.href)
@@ -513,15 +460,9 @@ class StacQuerier:
         # Add item IDs, gauge information, and hucs to results
         for collection_key in results:
             for scenario_id in results[collection_key]:
-                results[collection_key][scenario_id]["stac_items"] = list(
-                    item_ids[collection_key][scenario_id]
-                )
-                results[collection_key][scenario_id]["gauge"] = gauge_info[
-                    collection_key
-                ][scenario_id]
-                results[collection_key][scenario_id]["hucs"] = hucs_info[
-                    collection_key
-                ][scenario_id]
+                results[collection_key][scenario_id]["stac_items"] = list(item_ids[collection_key][scenario_id])
+                results[collection_key][scenario_id]["gauge"] = gauge_info[collection_key][scenario_id]
+                results[collection_key][scenario_id]["hucs"] = hucs_info[collection_key][scenario_id]
 
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
@@ -645,9 +586,7 @@ class StacQuerier:
             try:
                 query_polygon = shape(roi_geojson)
             except Exception as e:
-                logger.warning(
-                    f"Could not convert ROI to shapely geometry: {e}"
-                )
+                logger.warning(f"Could not convert ROI to shapely geometry: {e}")
 
         # Build search kwargs
         search_kw = {
@@ -656,13 +595,9 @@ class StacQuerier:
         }
 
         # KLUDGE: Hardcode 2022 date range for GFM collections. this will be removed after trial batches with gfm data are completed.
-        if self.collections is not None and any(
-            "gfm" in coll.lower() for coll in self.collections
-        ):
+        if self.collections is not None and any("gfm" in coll.lower() for coll in self.collections):
             search_kw["datetime"] = "2022-01-01T00:00:00Z/2022-12-31T23:59:59Z"
-            logger.info(
-                "KLUDGE: Overriding datetime filter to 2022 for GFM collections"
-            )
+            logger.info("KLUDGE: Overriding datetime filter to 2022 for GFM collections")
 
         # Only include collections if specified, otherwise query all available
         if self.collections is not None:
@@ -671,14 +606,10 @@ class StacQuerier:
         search_kw = {k: v for k, v in search_kw.items() if v is not None}
 
         try:
-            collections_msg = search_kw.get(
-                "collections", "all available collections"
-            )
+            collections_msg = search_kw.get("collections", "all available collections")
             logger.info(f"Searching collections {collections_msg}")
             search = self.client.search(**search_kw)
-            items = list(
-                search.items()
-            )  # Convert to list for geometry filtering
+            items = list(search.items())  # Convert to list for geometry filtering
 
             if not items:
                 logger.info("STAC query returned no items")
@@ -686,9 +617,7 @@ class StacQuerier:
 
             # Apply geometry filtering if query polygon is provided
             if query_polygon and self.overlap_threshold_percent:
-                logger.info(
-                    f"Applying geometry filtering with {self.overlap_threshold_percent}% overlap threshold"
-                )
+                logger.info(f"Applying geometry filtering with {self.overlap_threshold_percent}% overlap threshold")
                 items = self._filter_items_by_geometry(items, query_polygon)
                 if not items:
                     logger.info("No items remained after geometry filtering")
@@ -697,20 +626,14 @@ class StacQuerier:
             grouped = self._format_results(items)
 
             if not grouped:
-                logger.info(
-                    "No valid scenarios found after processing STAC items"
-                )
+                logger.info("No valid scenarios found after processing STAC items")
                 return {}
             if "gfm_expanded" in grouped:
-                grouped["gfm_expanded"] = self._merge_gfm_expanded(
-                    grouped["gfm_expanded"]
-                )
+                grouped["gfm_expanded"] = self._merge_gfm_expanded(grouped["gfm_expanded"])
 
                 # Truncate timestamp ranges to just the first timestamp to get rid of double directory writing issue
                 truncated = {}
-                for scenario_key, scenario_data in grouped[
-                    "gfm_expanded"
-                ].items():
+                for scenario_key, scenario_data in grouped["gfm_expanded"].items():
                     # If key contains a slash (timestamp range), take only the first part
                     if "/" in scenario_key:
                         first_timestamp = scenario_key.split("/")[0]
@@ -728,9 +651,7 @@ class StacQuerier:
             logger.error(f"Unexpected error: {ex}")
             raise
 
-    def query_stac_by_item_id(
-        self, item_id: str
-    ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+    def query_stac_by_item_id(self, item_id: str) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
         """
         Query STAC API for a specific item by ID.
 
@@ -756,9 +677,7 @@ class StacQuerier:
             grouped = self._format_results([item])
 
             if not grouped:
-                logger.info(
-                    f"No valid scenarios found after processing item {item_id}"
-                )
+                logger.info(f"No valid scenarios found after processing item {item_id}")
                 return {}
 
             return dictify(grouped)

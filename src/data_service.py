@@ -69,16 +69,12 @@ class DataService:
                     if credentials.token:
                         self._s3_options["token"] = credentials.token
                     self._use_iam_credentials = True
-                    logging.info(
-                        "Using IAM instance profile credentials for S3 access"
-                    )
+                    logging.info("Using IAM instance profile credentials for S3 access")
 
                     # Start credential refresh thread for IAM credentials
                     self._start_credential_refresh_thread()
                 else:
-                    logging.warning(
-                        "No AWS credentials found in config or IAM instance profile"
-                    )
+                    logging.warning("No AWS credentials found in config or IAM instance profile")
             except Exception as e:
                 logging.warning(f"Failed to get IAM credentials: {e}")
 
@@ -103,21 +99,15 @@ class DataService:
 
         # Initialize FlowfileCombiner
         self.flowfile_combiner = FlowfileCombiner(
-            output_dir=config.flow_scenarios.output_dir
-            if config.flow_scenarios
-            else "combined_flowfiles"
+            output_dir=config.flow_scenarios.output_dir if config.flow_scenarios else "combined_flowfiles"
         )
 
     def _start_credential_refresh_thread(self):
         """Start a background thread to refresh IAM credentials every 4 hours."""
         if self._use_iam_credentials:
-            self._refresh_thread = threading.Thread(
-                target=self._credential_refresh_loop, daemon=True
-            )
+            self._refresh_thread = threading.Thread(target=self._credential_refresh_loop, daemon=True)
             self._refresh_thread.start()
-            logging.info(
-                "Started IAM credential refresh thread (4-hour interval)"
-            )
+            logging.info("Started IAM credential refresh thread (4-hour interval)")
 
     def _credential_refresh_loop(self):
         """Background thread loop to refresh credentials every 4 hours."""
@@ -147,9 +137,7 @@ class DataService:
 
                 logging.info("Successfully refreshed IAM credentials")
             else:
-                logging.error(
-                    "Failed to refresh credentials: No credentials available from boto3 session"
-                )
+                logging.error("Failed to refresh credentials: No credentials available from boto3 session")
         except Exception as e:
             logging.error(f"Error refreshing IAM credentials: {e}")
 
@@ -174,27 +162,19 @@ class DataService:
 
             # Ensure CRS is EPSG:4326
             if gdf.crs and gdf.crs.to_epsg() != 4326:
-                logging.info(
-                    f"Converting polygon data from {gdf.crs} to EPSG:4326"
-                )
+                logging.info(f"Converting polygon data from {gdf.crs} to EPSG:4326")
                 gdf = gdf.to_crs("EPSG:4326")
             elif not gdf.crs:
-                logging.warning(
-                    f"No CRS found in {file_path}, assuming EPSG:4326"
-                )
+                logging.warning(f"No CRS found in {file_path}, assuming EPSG:4326")
                 gdf.set_crs("EPSG:4326", inplace=True)
 
-            logging.info(
-                f"Loaded polygon GeoDataFrame with {len(gdf)} features from {file_path}"
-            )
+            logging.info(f"Loaded polygon GeoDataFrame with {len(gdf)} features from {file_path}")
             return gdf
 
         except FileNotFoundError:
             raise FileNotFoundError(f"Polygon data file not found: {file_path}")
         except Exception as e:
-            raise ValueError(
-                f"Error loading GeoDataFrame from {file_path}: {e}"
-            )
+            raise ValueError(f"Error loading GeoDataFrame from {file_path}: {e}")
 
     async def query_stac_for_flow_scenarios(
         self,
@@ -212,18 +192,12 @@ class DataService:
             Dictionary with STAC query results and combined flowfiles
         """
         # Generate polygon_id from index or use a default
-        polygon_id = (
-            f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
-        )
+        polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
 
         if not self.stac_querier or not self.config.stac:
-            raise RuntimeError(
-                "STAC configuration is required but not provided"
-            )
+            raise RuntimeError("STAC configuration is required but not provided")
 
-        logging.info(
-            f"Querying STAC for flow scenarios for polygon: {polygon_id}"
-        )
+        logging.info(f"Querying STAC for flow scenarios for polygon: {polygon_id}")
 
         try:
             # Run STAC query in executor to avoid blocking
@@ -232,9 +206,7 @@ class DataService:
             if self.aoi_is_item:
                 # Direct item query mode - extract aoi_name from tags
                 if not tags or "aoi_name" not in tags:
-                    raise ValueError(
-                        "aoi_name tag is required when --aoi_is_item is used"
-                    )
+                    raise ValueError("aoi_name tag is required when --aoi_is_item is used")
 
                 aoi_name = tags["aoi_name"]
                 logging.info(f"Querying STAC for specific item ID: {aoi_name}")
@@ -260,9 +232,7 @@ class DataService:
             # Process flowfiles from STAC results
             combined_flowfiles = {}
             if self.flowfile_combiner:
-                logging.info(
-                    f"Processing flowfiles for {len(stac_results)} collections"
-                )
+                logging.info(f"Processing flowfiles for {len(stac_results)} collections")
 
                 # Create temporary directory for this polygon's combined flowfiles
                 temp_dir = f"/tmp/flow_scenarios_{polygon_id}"
@@ -275,9 +245,7 @@ class DataService:
                     temp_dir,
                 )
 
-                logging.info(
-                    f"Combined flowfiles created for polygon {polygon_id}"
-                )
+                logging.info(f"Combined flowfiles created for polygon {polygon_id}")
 
             return {
                 "scenarios": stac_results,
@@ -303,18 +271,14 @@ class DataService:
         await asyncio.sleep(0.01)
 
         # Generate polygon_id from index or use a default
-        polygon_id = (
-            f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
-        )
+        polygon_id = f"polygon_{len(polygon_gdf)}" if len(polygon_gdf) > 0 else "unknown"
         logging.info(f"Querying catchments for polygon: {polygon_id}")
 
         if self.hand_querier:
             # Use real hand index query
             try:
                 # Create temporary directory for parquet outputs
-                with tempfile.TemporaryDirectory(
-                    prefix=f"catchments_{polygon_id}_"
-                ) as temp_dir:
+                with tempfile.TemporaryDirectory(prefix=f"catchments_{polygon_id}_") as temp_dir:
                     # Run the query with temporary output directory
                     loop = asyncio.get_running_loop()
                     catchments_result = await loop.run_in_executor(
@@ -325,9 +289,7 @@ class DataService:
                     )
 
                     if not catchments_result:
-                        logging.info(
-                            f"No catchments found for polygon {polygon_id}"
-                        )
+                        logging.info(f"No catchments found for polygon {polygon_id}")
                         return {"catchments": {}, "hand_version": "real_query"}
 
                     # Copy parquet files to a more permanent location if needed
@@ -357,15 +319,11 @@ class DataService:
                     }
 
             except Exception as e:
-                logging.error(
-                    f"Error in hand index query for polygon {polygon_id}: {e}"
-                )
+                logging.error(f"Error in hand index query for polygon {polygon_id}: {e}")
                 raise
 
         # No hand querier available
-        raise RuntimeError(
-            f"Hand index querier is required but not initialized for polygon {polygon_id}"
-        )
+        raise RuntimeError(f"Hand index querier is required but not initialized for polygon {polygon_id}")
 
     async def copy_file_to_uri(self, source_path: str, dest_uri: str):
         """Copies a file (e.g., parquet) to a URI (local or S3) using fsspec.
@@ -378,15 +336,12 @@ class DataService:
             else source_path
         )
         dest_uri_normalized = (
-            os.path.abspath(dest_uri)
-            if not dest_uri.startswith(("s3://", "http://", "https://"))
-            else dest_uri
+            os.path.abspath(dest_uri) if not dest_uri.startswith(("s3://", "http://", "https://")) else dest_uri
         )
 
         # Copy if source is local and destination is S3, or if both are local but paths differ
         should_copy = (
-            not source_path.startswith(("s3://", "http://", "https://"))
-            and dest_uri.startswith("s3://")
+            not source_path.startswith(("s3://", "http://", "https://")) and dest_uri.startswith("s3://")
         ) or (
             not source_path.startswith(("s3://", "http://", "https://"))
             and not dest_uri.startswith(("s3://", "http://", "https://"))
@@ -411,14 +366,10 @@ class DataService:
                 return dest_uri
             except Exception as e:
                 logging.exception(f"Failed to copy {source_path} to {dest_uri}")
-                raise DataServiceException(
-                    f"Failed to copy file to {dest_uri}: {str(e)}"
-                ) from e
+                raise DataServiceException(f"Failed to copy file to {dest_uri}: {str(e)}") from e
         else:
             # If already on S3 or both local with same path, just return the source path
-            logging.debug(
-                f"No copy needed - using existing path: {source_path}"
-            )
+            logging.debug(f"No copy needed - using existing path: {source_path}")
             return source_path
 
     def _sync_copy_file(self, source_path: str, dest_uri: str):
@@ -454,19 +405,13 @@ class DataService:
                 dest_uri,
                 dest_exists,
             )
-            logging.info(
-                f"Successfully {'appended to' if dest_exists else 'created'} {dest_uri}"
-            )
+            logging.info(f"Successfully {'appended to' if dest_exists else 'created'} {dest_uri}")
             return dest_uri
         except Exception as e:
             logging.exception(f"Failed to append {source_path} to {dest_uri}")
-            raise DataServiceException(
-                f"Failed to append file to {dest_uri}: {str(e)}"
-            ) from e
+            raise DataServiceException(f"Failed to append file to {dest_uri}: {str(e)}") from e
 
-    def _sync_append_file(
-        self, source_path: str, dest_uri: str, dest_exists: bool
-    ):
+    def _sync_append_file(self, source_path: str, dest_uri: str, dest_exists: bool):
         """Synchronous helper for appending files using fsspec."""
         # Read source content
         with open(source_path, "rb") as src:
@@ -514,9 +459,7 @@ class DataService:
             )
         except Exception as e:
             logging.exception(f"Error checking file {uri}")
-            raise DataServiceException(
-                f"Failed to check file existence {uri}: {str(e)}"
-            ) from e
+            raise DataServiceException(f"Failed to check file existence {uri}: {str(e)}") from e
 
     def _sync_check_file_exists(self, uri: str) -> bool:
         """Synchronous helper to check if file exists (S3 or local)."""
@@ -531,9 +474,7 @@ class DataService:
                 # Local file
                 return Path(uri).exists()
         except (FileNotFoundError, NoCredentialsError, ClientError) as e:
-            logging.debug(
-                f"File {uri} does not exist or is not accessible: {e}"
-            )
+            logging.debug(f"File {uri} does not exist or is not accessible: {e}")
             return False
         except Exception as e:
             logging.warning(f"Unexpected error checking file {uri}: {e}")
@@ -574,9 +515,7 @@ class DataService:
             for uri in missing_uris:
                 logging.info(f"  Missing: {uri}")
 
-        logging.info(
-            f"Validated files: {len(valid_uris)} exist, {len(missing_uris)} missing"
-        )
+        logging.info(f"Validated files: {len(valid_uris)} exist, {len(missing_uris)} missing")
         return valid_uris
 
     def find_metrics_files(self, base_path: str) -> List[str]:
@@ -604,20 +543,14 @@ class DataService:
             else:
                 base_path_obj = Path(base_path)
                 if base_path_obj.exists():
-                    metrics_files = [
-                        str(p) for p in base_path_obj.glob("**/*__metrics.csv")
-                    ]
+                    metrics_files = [str(p) for p in base_path_obj.glob("**/*__metrics.csv")]
 
-            logging.info(
-                f"Found {len(metrics_files)} metrics.csv files in {base_path}"
-            )
+            logging.info(f"Found {len(metrics_files)} metrics.csv files in {base_path}")
             return metrics_files
 
         except Exception as e:
             logging.exception(f"Error finding metrics files in {base_path}")
-            raise DataServiceException(
-                f"Failed to find metrics files in {base_path}: {str(e)}"
-            ) from e
+            raise DataServiceException(f"Failed to find metrics files in {base_path}: {str(e)}") from e
 
     def cleanup(self):
         """Clean up resources, including HandIndexQuerier connection and refresh thread."""
@@ -627,9 +560,7 @@ class DataService:
             self._stop_refresh.set()
             self._refresh_thread.join(timeout=5)
             if self._refresh_thread.is_alive():
-                logging.warning(
-                    "Credential refresh thread did not stop gracefully"
-                )
+                logging.warning("Credential refresh thread did not stop gracefully")
 
         # Clean up HandIndexQuerier
         if self.hand_querier:

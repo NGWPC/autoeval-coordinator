@@ -47,7 +47,7 @@ class HandIndexQuerier:
                 self.con.execute("LOAD httpfs;")
                 self.con.execute("INSTALL aws;")
                 self.con.execute("LOAD aws;")
-                
+
                 # Try using DuckDB's credential chain provider instead of manual credentials
                 # This should work better with temporary credentials
                 try:
@@ -55,7 +55,7 @@ class HandIndexQuerier:
                     CREATE SECRET s3_secret (
                         TYPE S3,
                         PROVIDER CREDENTIAL_CHAIN,
-                        REGION '{self.s3_region or 'us-east-1'}'
+                        REGION '{self.s3_region or "us-east-1"}'
                     );
                     """)
                     logger.info("Using DuckDB credential chain for S3 access")
@@ -70,7 +70,7 @@ class HandIndexQuerier:
                             self.con.execute(f"SET s3_secret_access_key='{self.credentials.secret_key}';")
                         if self.credentials.token:
                             self.con.execute(f"SET s3_session_token='{self.credentials.token}';")
-                
+
                 self.con.execute("SET memory_limit = '7GB';")
                 self.con.execute("SET temp_directory = '/tmp';")
 
