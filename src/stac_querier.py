@@ -81,6 +81,7 @@ class StacQuerier:
         collections: Optional[List[str]] = None,
         overlap_threshold_percent: float = 40.0,
         datetime_filter: Optional[str] = None,
+        aoi_is_item: bool = False,
     ):
         """
         Initialize the StacQuerier.
@@ -90,11 +91,13 @@ class StacQuerier:
             collections: List of STAC collection IDs to query (None means query all available)
             overlap_threshold_percent: Minimum overlap percentage to keep a STAC item
             datetime_filter: STAC datetime or interval filter
+            aoi_is_item: If True, query specific STAC items directly by ID
         """
         self.api_url = api_url
         self.collections = collections
         self.overlap_threshold_percent = overlap_threshold_percent
         self.datetime_filter = datetime_filter
+        self.aoi_is_item = aoi_is_item
         self.client = None
 
         # Collection specifications
@@ -269,6 +272,8 @@ class StacQuerier:
         ripple_best_items = {}
         # Track STAC item IDs for each scenario
         item_ids = defaultdict(lambda: defaultdict(set))
+        gauge_info = defaultdict(lambda: defaultdict(lambda: None))
+        hucs_info = defaultdict(lambda: defaultdict(list))
 
         for idx, item in enumerate(item_iter, start=1):
             if item.collection_id == "ripple-fim-collection":
@@ -285,7 +290,10 @@ class StacQuerier:
                             key not in ripple_best_items
                             or compare_versions(flows2fim_version, ripple_best_items[key][1]) > 0
                         ):
-                            ripple_best_items[key] = (item.id, flows2fim_version)
+                            ripple_best_items[key] = (
+                                item.id,
+                                flows2fim_version,
+                            )
                         else:
                             # Skip this item - we already have a better version
                             logger.info(
@@ -302,16 +310,25 @@ class StacQuerier:
                 logger.info(f"Processed {idx} items (last: {item.id})")
 
             coll = item.collection_id or "<none>"
-            short = coll.replace("-collection", "").replace("-fim", "")
-            if short == "gfm-expanded":
-                short = "gfm_expanded"
+            collection_key = coll
+            # Handle special case for gfm-expanded-collection to maintain compatibility
+            if coll == "gfm-expanded-collection":
+                collection_key = "gfm_expanded"
 
             # 1) item‐level grouping
             if coll in self.COLLECTIONS:
                 group_fn, tests = self.COLLECTIONS[coll]
                 gid = group_fn(item)
-                bucket = results[short][gid]
-                item_ids[short][gid].add(item.id)
+                bucket = results[collection_key][gid]
+                item_ids[collection_key][gid].add(item.id)
+
+                # Extract hucs for item-level collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for huc in hucs:
+                        if huc not in hucs_info[collection_key][gid]:
+                            hucs_info[collection_key][gid].append(huc)
+
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -319,28 +336,12 @@ class StacQuerier:
                         if test(k, a) and a.href not in bucket[atype]:
                             bucket[atype].append(a.href)
 
-            # 2) BLE/NWS/USGS/Ripple asset‐level grouping
-            elif coll == "ble-collection" or coll.endswith("-fim-collection"):
-                # preload ripple assets once
-                if coll == "ripple-fim-collection" and not ripple_cache:
-                    try:
-                        col = item.get_collection()
-                        for ak, aa in col.assets.items():
-                            m = re.search(r"flows_(\d+)_yr_", ak)
-                            ri = f"{m.group(1)}yr" if m else None
-                            if ri and aa.media_type == "text/csv":
-                                logger.info(f"Caching Ripple flowfile for {ri}: {aa.href}")
-                                ripple_cache.setdefault(ri, []).append(aa.href)
-                    except Exception as e:
-                        logger.warning(f"Ripple cache failed: {e}")
-
-                specs = (
-                    self.BLE_SPEC
-                    if coll == "ble-collection"
-                    else self.RIPPLE_SPEC
-                    if coll == "ripple-fim-collection"
-                    else self.NWS_USGS_SPEC
-                )
+            # 2) BLE/NWS/USGS asset‐level grouping (excluding Ripple)
+            elif coll == "ble-collection" or coll in [
+                "nws-fim-collection",
+                "usgs-fim-collection",
+            ]:
+                specs = self.BLE_SPEC if coll == "ble-collection" else self.NWS_USGS_SPEC
 
                 found = set()
                 for k, a in item.assets.items():
@@ -352,27 +353,102 @@ class StacQuerier:
                             continue
                         gid = m.expand(gid_t) if "\\" in gid_t else gid_t
                         at = m.expand(at_t)
-                        bkt = results[short][gid]
-                        item_ids[short][gid].add(item.id)
+                        bkt = results[collection_key][gid]
+                        item_ids[collection_key][gid].add(item.id)
                         if a.href not in bkt[at]:
                             bkt[at].append(a.href)
                         found.add(gid)
 
-                # append ripple flowfiles
-                if coll == "ripple-fim-collection":
-                    for gid in found:
-                        if gid in ripple_cache:
-                            logger.info(f"Adding cached flowfiles for {gid}")
-                            for href in ripple_cache[gid]:
-                                if href not in results[short][gid]["flowfiles"]:
-                                    results[short][gid]["flowfiles"].append(href)
+                        if coll in [
+                            "nws-fim-collection",
+                            "usgs-fim-collection",
+                        ]:
+                            gauge = item.properties.get("gauge")
+                            if gauge and gauge_info[collection_key][gid] is None:
+                                gauge_info[collection_key][gid] = gauge
 
-            # 3) fallback
+                # Extract hucs for all asset-level collections (BLE, NWS, USGS)
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for gid in found:
+                        for huc in hucs:
+                            if huc not in hucs_info[collection_key][gid]:
+                                hucs_info[collection_key][gid].append(huc)
+
+            # 3) Ripple asset-level grouping with source-based separation
+            elif coll == "ripple-fim-collection":
+                # preload ripple assets once
+                if not ripple_cache:
+                    try:
+                        col = item.get_collection()
+                        for ak, aa in col.assets.items():
+                            m = re.search(r"flows_(\d+)_yr_", ak)
+                            ri = f"{m.group(1)}yr" if m else None
+                            if ri and aa.media_type == "text/csv":
+                                logger.info(f"Caching Ripple flowfile for {ri}: {aa.href}")
+                                ripple_cache.setdefault(ri, []).append(aa.href)
+                    except Exception as e:
+                        logger.warning(f"Ripple cache failed: {e}")
+
+                specs = self.RIPPLE_SPEC
+                source = item.properties.get("source", "unknown_source")
+
+                found = set()
+                for k, a in item.assets.items():
+                    if not a.href:
+                        continue
+                    for pat, gid_t, at_t in specs:
+                        m = pat.match(k)
+                        if not m:
+                            continue
+                        # Get the base ID (e.g., "100yr")
+                        base_gid = m.expand(gid_t) if "\\" in gid_t else gid_t
+                        # Create the new, unique group ID
+                        gid = f"{source}-{base_gid}"
+                        at = m.expand(at_t)
+                        bkt = results[collection_key][gid]
+                        item_ids[collection_key][gid].add(item.id)
+                        if a.href not in bkt[at]:
+                            bkt[at].append(a.href)
+                        found.add(gid)
+
+                # Extract hucs for Ripple collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for gid in found:
+                        for huc in hucs:
+                            if huc not in hucs_info[collection_key][gid]:
+                                hucs_info[collection_key][gid].append(huc)
+
+                # append ripple flowfiles
+                for composite_gid in found:
+                    # Extract "100yr" from "SourceA-100yr"
+                    base_gid = composite_gid.split("-", 1)[-1]
+                    if base_gid in ripple_cache:
+                        logger.info(f"Adding cached flowfiles for {composite_gid}")
+                        for href in ripple_cache[base_gid]:
+                            if href not in results[collection_key][composite_gid]["flowfiles"]:
+                                results[collection_key][composite_gid]["flowfiles"].append(href)
+
+            # 4) fallback
             else:
                 logger.warning(f"Unknown coll '{coll}'; grouping by item.id")
                 gid = item.id
-                bkt = results[short][gid]
-                item_ids[short][gid].add(item.id)
+                bkt = results[collection_key][gid]
+                item_ids[collection_key][gid].add(item.id)
+
+                if "nws" in coll.lower() or "usgs" in coll.lower():
+                    gauge = item.properties.get("gauge")
+                    if gauge and gauge_info[collection_key][gid] is None:
+                        gauge_info[collection_key][gid] = gauge
+
+                # Extract hucs for fallback collections
+                hucs = item.properties.get("hucs", [])
+                if hucs:
+                    for huc in hucs:
+                        if huc not in hucs_info[collection_key][gid]:
+                            hucs_info[collection_key][gid].append(huc)
+
                 for k, a in item.assets.items():
                     if not a.href:
                         continue
@@ -381,11 +457,13 @@ class StacQuerier:
                     elif "flow" in k and a.media_type and "csv" in a.media_type:
                         bkt["flowfiles"].append(a.href)
 
-        # Add item IDs to results
-        for collection_short in results:
-            for scenario_id in results[collection_short]:
-                results[collection_short][scenario_id]["stac_items"] = list(item_ids[collection_short][scenario_id])
-        
+        # Add item IDs, gauge information, and hucs to results
+        for collection_key in results:
+            for scenario_id in results[collection_key]:
+                results[collection_key][scenario_id]["stac_items"] = list(item_ids[collection_key][scenario_id])
+                results[collection_key][scenario_id]["gauge"] = gauge_info[collection_key][scenario_id]
+                results[collection_key][scenario_id]["hucs"] = hucs_info[collection_key][scenario_id]
+
         logger.info(f"Finished formatting {len(seen)} items.")
         return results
 
@@ -410,6 +488,18 @@ class StacQuerier:
                         for h in hs:
                             if h not in iv.assets[at]:
                                 iv.assets[at].append(h)
+                    elif at == "gauge":
+                        # Handle gauge specially - it's a single value, not a list
+                        if hs is not None:
+                            iv.assets[at] = hs
+                    elif at == "hucs":
+                        # Handle hucs specially - merge lists without duplicates
+                        if hs:
+                            existing_hucs = iv.assets.get(at, [])
+                            for h in hs:
+                                if h not in existing_hucs:
+                                    existing_hucs.append(h)
+                            iv.assets[at] = existing_hucs
                     else:
                         for h in hs:
                             if h not in iv.assets[at]:
@@ -430,6 +520,18 @@ class StacQuerier:
                         for h in hs:
                             if h not in cur.assets[at]:
                                 cur.assets[at].append(h)
+                    elif at == "gauge":
+                        # Handle gauge specially - use the first non-null value
+                        if hs is not None and at not in cur.assets:
+                            cur.assets[at] = hs
+                    elif at == "hucs":
+                        # Handle hucs specially - merge lists without duplicates
+                        if hs:
+                            existing_hucs = cur.assets.get(at, [])
+                            for h in hs:
+                                if h not in existing_hucs:
+                                    existing_hucs.append(h)
+                            cur.assets[at] = existing_hucs
                     else:
                         for h in hs:
                             if h not in cur.assets[at]:
@@ -447,7 +549,9 @@ class StacQuerier:
         return out
 
     def query_stac_for_polygon(
-        self, polygon_gdf: Optional[gpd.GeoDataFrame] = None, roi_geojson: Optional[Dict] = None
+        self,
+        polygon_gdf: Optional[gpd.GeoDataFrame] = None,
+        roi_geojson: Optional[Dict] = None,
     ) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
         """
         Query STAC API for items and group them by collection/scenario.
@@ -489,11 +593,16 @@ class StacQuerier:
             "datetime": self.datetime_filter,
             **({"intersects": intersects} if intersects else {}),
         }
-        
+
+        # KLUDGE: Hardcode 2022 date range for GFM collections. this will be removed after trial batches with gfm data are completed.
+        if self.collections is not None and any("gfm" in coll.lower() for coll in self.collections):
+            search_kw["datetime"] = "2022-01-01T00:00:00Z/2022-12-31T23:59:59Z"
+            logger.info("KLUDGE: Overriding datetime filter to 2022 for GFM collections")
+
         # Only include collections if specified, otherwise query all available
         if self.collections is not None:
             search_kw["collections"] = self.collections
-        
+
         search_kw = {k: v for k, v in search_kw.items() if v is not None}
 
         try:
@@ -502,14 +611,36 @@ class StacQuerier:
             search = self.client.search(**search_kw)
             items = list(search.items())  # Convert to list for geometry filtering
 
+            if not items:
+                logger.info("STAC query returned no items")
+                return {}
+
             # Apply geometry filtering if query polygon is provided
             if query_polygon and self.overlap_threshold_percent:
                 logger.info(f"Applying geometry filtering with {self.overlap_threshold_percent}% overlap threshold")
                 items = self._filter_items_by_geometry(items, query_polygon)
+                if not items:
+                    logger.info("No items remained after geometry filtering")
+                    return {}
 
             grouped = self._format_results(items)
+
+            if not grouped:
+                logger.info("No valid scenarios found after processing STAC items")
+                return {}
             if "gfm_expanded" in grouped:
                 grouped["gfm_expanded"] = self._merge_gfm_expanded(grouped["gfm_expanded"])
+
+                # Truncate timestamp ranges to just the first timestamp to get rid of double directory writing issue
+                truncated = {}
+                for scenario_key, scenario_data in grouped["gfm_expanded"].items():
+                    # If key contains a slash (timestamp range), take only the first part
+                    if "/" in scenario_key:
+                        first_timestamp = scenario_key.split("/")[0]
+                        truncated[first_timestamp] = scenario_data
+                    else:
+                        truncated[scenario_key] = scenario_data
+                grouped["gfm_expanded"] = truncated
 
             return dictify(grouped)
 
@@ -518,6 +649,44 @@ class StacQuerier:
             raise
         except Exception as ex:
             logger.error(f"Unexpected error: {ex}")
+            raise
+
+    def query_stac_by_item_id(self, item_id: str) -> Dict[str, Dict[str, Dict[str, List[str]]]]:
+        """
+        Query STAC API for a specific item by ID.
+
+        Args:
+            item_id: STAC item ID to retrieve
+
+        Returns:
+            Dictionary mapping collection -> scenario -> asset_type -> [paths]
+            Each scenario also includes 'stac_items' key with list of STAC item IDs
+        """
+        self._ensure_client()
+
+        try:
+            logger.info(f"Querying STAC for item ID: {item_id}")
+
+            # Get the specific item
+            item = next(self.client.search(ids=[item_id]).items(), None)
+            if not item:
+                logger.info(f"No item found with ID: {item_id}")
+                return {}
+
+            # Process the single item using the existing format_results method
+            grouped = self._format_results([item])
+
+            if not grouped:
+                logger.info(f"No valid scenarios found after processing item {item_id}")
+                return {}
+
+            return dictify(grouped)
+
+        except requests.RequestException as rex:
+            logger.error(f"STAC request failed for item {item_id}: {rex}")
+            raise
+        except Exception as ex:
+            logger.error(f"Unexpected error querying item {item_id}: {ex}")
             raise
 
     def save_results(self, results: Dict, output_path: str):
