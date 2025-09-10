@@ -59,12 +59,12 @@ def read_agg_metrics(agg_metrics_path: str) -> Optional[pd.DataFrame]:
             # Specify dtype for columns that should remain as strings
             # to preserve leading zeros in HUC codes
             dtype_spec = {
-                'hucs': str,
-                'nws_lid': str,
-                'stac_item_id': str,
-                'scenario': str,
-                'flow': str,
-                'collection_id': str
+                "hucs": str,
+                "nws_lid": str,
+                "stac_item_id": str,
+                "scenario": str,
+                "flow": str,
+                "collection_id": str,
             }
             df = pd.read_csv(f, dtype=dtype_spec)
             return df
@@ -153,7 +153,7 @@ def main():
     output_root = args.output_root.rstrip("/")
 
     logger.info(f"Starting aggregation from {output_root}")
-    logger.info(f"Parameters: calb={args.calb}, " f"hand_version={args.hand_version}, resolution={args.resolution}")
+    logger.info(f"Parameters: calb={args.calb}, hand_version={args.hand_version}, resolution={args.resolution}")
 
     master_df = aggregate_metrics(output_root, args.calb, args.hand_version, args.resolution)
 
