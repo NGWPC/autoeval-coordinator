@@ -179,7 +179,11 @@ class MetricsAggregator:
             # Try case-insensitive match
             for scenario_key, scenario_data in scenarios.items():
                 if scenario_key.lower() == scenario_name.lower():
-                    return scenario_data.get("stac_items", []), scenario_data.get("gauge"), scenario_data.get("hucs", [])
+                    return (
+                        scenario_data.get("stac_items", []),
+                        scenario_data.get("gauge"),
+                        scenario_data.get("hucs", []),
+                    )
 
         logger.warning(f"No STAC items found for {collection_name}/{scenario_name}")
         return [], None, []
