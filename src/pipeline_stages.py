@@ -84,18 +84,14 @@ class PipelineStage(ABC):
         pass
 
     @abstractmethod
-    def filter_inputs(
-        self, results: List[PipelineResult]
-    ) -> List[PipelineResult]:
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """Filter which results can be processed by this stage."""
         pass
 
     def log_stage_start(self, stage_name: str, input_count: int):
         logger.debug(f"{stage_name}: Starting with {input_count} inputs")
 
-    def log_stage_complete(
-        self, stage_name: str, success_count: int, total_count: int
-    ):
+    def log_stage_complete(self, stage_name: str, success_count: int, total_count: int):
         logger.debug(f"{stage_name}: {success_count}/{total_count} succeeded")
 
     def _get_base_meta_kwargs(self) -> Dict[str, str]:
@@ -147,14 +143,10 @@ class InundationStage(PipelineStage):
         tags: Dict[str, str],
         catchments: Dict[str, Dict[str, Any]],
     ):
-        super().__init__(
-            config, nomad_service, data_service, path_factory, tags
-        )
+        super().__init__(config, nomad_service, data_service, path_factory, tags)
         self.catchments = catchments
 
-    def filter_inputs(
-        self, results: List[PipelineResult]
-    ) -> List[PipelineResult]:
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """All results are valid for inundation stage."""
         return results
 
@@ -171,21 +163,15 @@ class InundationStage(PipelineStage):
             # Copy flowfile once per scenario
             flowfile_s3_path = await self.data_svc.copy_file_to_uri(
                 result.flowfile_path,
-                self.path_factory.flowfile_path(
-                    result.collection_name, result.scenario_name
-                ),
+                self.path_factory.flowfile_path(result.collection_name, result.scenario_name),
             )
-            logger.debug(
-                f"[{result.scenario_id}] Copied flowfile to S3: {flowfile_s3_path}"
-            )
+            logger.debug(f"[{result.scenario_id}] Copied flowfile to S3: {flowfile_s3_path}")
 
             for catch_id, catchment_info in self.catchments.items():
                 output_path = self.path_factory.inundation_output_path(
                     result.collection_name, result.scenario_name, catch_id
                 )
-                result.set_path(
-                    "inundation", f"catchment_{catch_id}", output_path
-                )
+                result.set_path("inundation", f"catchment_{catch_id}", output_path)
 
                 task = asyncio.create_task(
                     self._process_catchment(
@@ -207,22 +193,17 @@ class InundationStage(PipelineStage):
         # Group results by scenario and validate outputs
         scenario_outputs = {}
         lost_jobs = []
-        for (result, catch_id, output_path), task_result in zip(
-            task_metadata, task_results
-        ):
+        for (result, catch_id, output_path), task_result in zip(task_metadata, task_results):
             if result.scenario_id not in scenario_outputs:
                 scenario_outputs[result.scenario_id] = []
 
             if not isinstance(task_result, Exception):
                 scenario_outputs[result.scenario_id].append(output_path)
             else:
-                logger.error(
-                    f"[{result.scenario_id}] Catchment {catch_id} inundation failed: {task_result}"
-                )
+                logger.error(f"[{result.scenario_id}] Catchment {catch_id} inundation failed: {task_result}")
                 # Check if this is a LOST job (job was purged from Nomad)
                 error_str = str(task_result)
-                if ("Job lost" in error_str or 
-                    "URLNotFoundNomadException" in error_str):
+                if "Job lost" in error_str or "URLNotFoundNomadException" in error_str:
                     lost_jobs.append(f"{result.scenario_id}/{catch_id}")
 
         # Validate files and update results
@@ -232,29 +213,23 @@ class InundationStage(PipelineStage):
             if outputs:
                 valid_outputs = await self.data_svc.validate_files(outputs)
                 if valid_outputs:
-                    result.set_path(
-                        "inundation", "valid_outputs", valid_outputs
-                    )
+                    result.set_path("inundation", "valid_outputs", valid_outputs)
                     result.status = "inundation_complete"
                     updated_results.append(result)
-                    logger.debug(
-                        f"[{result.scenario_id}] {len(valid_outputs)}/{len(outputs)} inundation outputs valid"
-                    )
+                    logger.debug(f"[{result.scenario_id}] {len(valid_outputs)}/{len(outputs)} inundation outputs valid")
                 else:
                     result.mark_failed("No valid inundation outputs")
             else:
                 result.mark_failed("No inundation outputs produced")
 
-        self.log_stage_complete(
-            "Inundation", len(updated_results), len(valid_results)
-        )
-        
+        self.log_stage_complete("Inundation", len(updated_results), len(valid_results))
+
         # Raise exception if any inundation jobs were lost
         if lost_jobs:
             error_msg = f"Inundation stage had {len(lost_jobs)} lost job(s): {', '.join(lost_jobs)}"
             logger.error(error_msg)
             raise NomadError(error_msg)
-        
+
         return updated_results
 
     async def _process_catchment(
@@ -277,9 +252,7 @@ class InundationStage(PipelineStage):
             self.path_factory.catchment_parquet_path(catch_id),
         )
 
-        meta = self._create_inundation_meta(
-            parquet_path, flowfile_s3_path, output_path
-        )
+        meta = self._create_inundation_meta(parquet_path, flowfile_s3_path, output_path)
 
         # add bench_src, scenario, and catchment internal tags
         internal_tags = {
@@ -294,9 +267,7 @@ class InundationStage(PipelineStage):
             prefix=tags_str,
             meta=meta.model_dump(),
         )
-        logger.debug(
-            f"[{result.scenario_id}/{catch_id}] inundator done → {job_id}"
-        )
+        logger.debug(f"[{result.scenario_id}/{catch_id}] inundator done → {job_id}")
         return job_id
 
     def _create_inundation_meta(
@@ -322,22 +293,13 @@ class MosaicStage(PipelineStage):
         tags: Dict[str, str],
         aoi_path: str,
     ):
-        super().__init__(
-            config, nomad_service, data_service, path_factory, tags
-        )
+        super().__init__(config, nomad_service, data_service, path_factory, tags)
         self.aoi_path = aoi_path
         self._clip_geometry_s3_path = None
 
-    def filter_inputs(
-        self, results: List[PipelineResult]
-    ) -> List[PipelineResult]:
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """Filter results that have valid inundation outputs."""
-        return [
-            r
-            for r in results
-            if r.status == "inundation_complete"
-            and r.get_path("inundation", "valid_outputs")
-        ]
+        return [r for r in results if r.status == "inundation_complete" and r.get_path("inundation", "valid_outputs")]
 
     async def run(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """Run mosaic jobs for scenarios with valid inundation outputs."""
@@ -349,9 +311,7 @@ class MosaicStage(PipelineStage):
             self._clip_geometry_s3_path = await self.data_svc.copy_file_to_uri(
                 self.aoi_path, self.path_factory.aoi_path()
             )
-            logger.debug(
-                f"Copied AOI file to S3: {self._clip_geometry_s3_path}"
-            )
+            logger.debug(f"Copied AOI file to S3: {self._clip_geometry_s3_path}")
 
         hand_tasks = []
         benchmark_tasks = []
@@ -362,19 +322,13 @@ class MosaicStage(PipelineStage):
             benchmark_rasters = result.benchmark_rasters
 
             if not valid_outputs or not benchmark_rasters:
-                logger.warning(
-                    f"[{result.scenario_id}] Skipping mosaic - missing inputs"
-                )
+                logger.warning(f"[{result.scenario_id}] Skipping mosaic - missing inputs")
                 continue
 
             # HAND mosaic
-            hand_output_path = self.path_factory.hand_mosaic_path(
-                result.collection_name, result.scenario_name
-            )
+            hand_output_path = self.path_factory.hand_mosaic_path(result.collection_name, result.scenario_name)
             result.set_path("mosaic", "hand", hand_output_path)
-            hand_meta = self._create_mosaic_meta(
-                valid_outputs, hand_output_path
-            )
+            hand_meta = self._create_mosaic_meta(valid_outputs, hand_output_path)
 
             # add cand_src and scenario internal tags for HAND mosaic
             hand_internal_tags = {
@@ -400,9 +354,7 @@ class MosaicStage(PipelineStage):
                 result.collection_name, result.scenario_name
             )
             result.set_path("mosaic", "benchmark", benchmark_output_path)
-            benchmark_meta = self._create_mosaic_meta(
-                benchmark_rasters, benchmark_output_path
-            )
+            benchmark_meta = self._create_mosaic_meta(benchmark_rasters, benchmark_output_path)
 
             # add bench_src and scenario internal tags for benchmark mosaic
             benchmark_internal_tags = {
@@ -429,28 +381,20 @@ class MosaicStage(PipelineStage):
             return []
 
         hand_results = await asyncio.gather(*hand_tasks, return_exceptions=True)
-        benchmark_results = await asyncio.gather(
-            *benchmark_tasks, return_exceptions=True
-        )
+        benchmark_results = await asyncio.gather(*benchmark_tasks, return_exceptions=True)
 
         # Update results based on success/failure
         successful_results = []
         failed_scenarios = []
 
-        for result, hand_result, benchmark_result in zip(
-            task_results, hand_results, benchmark_results
-        ):
+        for result, hand_result, benchmark_result in zip(task_results, hand_results, benchmark_results):
             hand_failed = isinstance(hand_result, Exception)
             benchmark_failed = isinstance(benchmark_result, Exception)
 
             if hand_failed:
-                logger.error(
-                    f"[{result.scenario_id}] HAND mosaic failed: {hand_result}"
-                )
+                logger.error(f"[{result.scenario_id}] HAND mosaic failed: {hand_result}")
             if benchmark_failed:
-                logger.error(
-                    f"[{result.scenario_id}] Benchmark mosaic failed: {benchmark_result}"
-                )
+                logger.error(f"[{result.scenario_id}] Benchmark mosaic failed: {benchmark_result}")
 
             if not hand_failed and not benchmark_failed:
                 result.status = "mosaic_complete"
@@ -463,13 +407,9 @@ class MosaicStage(PipelineStage):
                 if benchmark_failed:
                     failure_type.append("benchmark")
                 result.mark_failed("One or both mosaics failed")
-                failed_scenarios.append(
-                    f"{result.scenario_id} ({', '.join(failure_type)})"
-                )
+                failed_scenarios.append(f"{result.scenario_id} ({', '.join(failure_type)})")
 
-        self.log_stage_complete(
-            "Mosaic", len(successful_results), len(valid_results)
-        )
+        self.log_stage_complete("Mosaic", len(successful_results), len(valid_results))
 
         # Raise exception if any mosaic jobs failed
         if failed_scenarios:
@@ -479,9 +419,7 @@ class MosaicStage(PipelineStage):
 
         return successful_results
 
-    def _create_mosaic_meta(
-        self, raster_paths: List[str], output_path: str
-    ) -> MosaicDispatchMeta:
+    def _create_mosaic_meta(self, raster_paths: List[str], output_path: str) -> MosaicDispatchMeta:
         return MosaicDispatchMeta(
             raster_paths=raster_paths,
             output_path=output_path,
@@ -493,9 +431,7 @@ class MosaicStage(PipelineStage):
 class AgreementStage(PipelineStage):
     """Stage that creates agreement maps from HAND and benchmark mosaics."""
 
-    def filter_inputs(
-        self, results: List[PipelineResult]
-    ) -> List[PipelineResult]:
+    def filter_inputs(self, results: List[PipelineResult]) -> List[PipelineResult]:
         """Filter results that have valid mosaic outputs."""
         return [r for r in results if r.status == "mosaic_complete"]
 
@@ -511,12 +447,8 @@ class AgreementStage(PipelineStage):
             hand_mosaic = result.get_path("mosaic", "hand")
             benchmark_mosaic = result.get_path("mosaic", "benchmark")
 
-            agreement_output_path = self.path_factory.agreement_map_path(
-                result.collection_name, result.scenario_name
-            )
-            metrics_output_path = self.path_factory.agreement_metrics_path(
-                result.collection_name, result.scenario_name
-            )
+            agreement_output_path = self.path_factory.agreement_map_path(result.collection_name, result.scenario_name)
+            metrics_output_path = self.path_factory.agreement_metrics_path(result.collection_name, result.scenario_name)
 
             result.set_path("agreement", "map", agreement_output_path)
             result.set_path("agreement", "metrics", metrics_output_path)
@@ -561,18 +493,14 @@ class AgreementStage(PipelineStage):
         for result, job_result in zip(task_results, task_job_results):
             if isinstance(job_result, Exception):
                 result.mark_failed(f"Agreement job failed: {job_result}")
-                logger.error(
-                    f"[{result.scenario_id}] Agreement job failed: {job_result}"
-                )
+                logger.error(f"[{result.scenario_id}] Agreement job failed: {job_result}")
                 failed_scenarios.append(result.scenario_id)
             else:
                 result.mark_completed()
                 successful_results.append(result)
                 logger.debug(f"[{result.scenario_id}] Pipeline complete")
 
-        self.log_stage_complete(
-            "Agreement", len(successful_results), len(valid_results)
-        )
+        self.log_stage_complete("Agreement", len(successful_results), len(valid_results))
 
         # Raise exception if any agreement jobs failed
         if failed_scenarios:

@@ -110,9 +110,7 @@ class _NomadAPIClient:
         async with self.semaphore:
             return await asyncio.to_thread(func, *args, **kwargs)
 
-    async def dispatch_job(
-        self, job_name: str, prefix: str, meta: Optional[Dict[str, str]]
-    ) -> str:
+    async def dispatch_job(self, job_name: str, prefix: str, meta: Optional[Dict[str, str]]) -> str:
         wrapped_call = self._nomad_retry(self._call)
         result = await wrapped_call(
             self.client.job.dispatch_job,
@@ -191,29 +189,20 @@ class NomadJobManager:
             error_msg = str(e)
 
             # Special handling for RetryError that wraps BaseNomadException
-            if (
-                "RetryError" in str(type(e))
-                and "BaseNomadException" in error_msg
-            ):
+            if "RetryError" in str(type(e)) and "BaseNomadException" in error_msg:
                 # Try to extract the cause from RetryError
                 if hasattr(e, "__cause__") and e.__cause__:
                     error_msg = f"{error_msg} - Cause: {str(e.__cause__)}"
-                elif hasattr(e, "last_attempt") and hasattr(
-                    e.last_attempt, "exception"
-                ):
+                elif hasattr(e, "last_attempt") and hasattr(e.last_attempt, "exception"):
                     # For tenacity RetryError
                     last_exception = e.last_attempt.exception()
                     if last_exception:
                         error_msg = f"RetryError after 3 attempts - Last error: {str(last_exception)}"
 
             logger.error(f"Failed to dispatch job {job_name}: {error_msg}")
-            raise JobDispatchError(
-                f"Failed to dispatch job {job_name}: {error_msg}"
-            ) from e
+            raise JobDispatchError(f"Failed to dispatch job {job_name}: {error_msg}") from e
 
-        tracker = JobTracker(
-            job_id=job_id, task_name=job_name, stage=(meta or {}).get("stage")
-        )
+        tracker = JobTracker(job_id=job_id, task_name=job_name, stage=(meta or {}).get("stage"))
         self._active_jobs[job_id] = tracker
         await self._update_db_status(tracker)
 
@@ -257,13 +246,9 @@ class NomadJobManager:
             if (
                 not allocations and time_since_dispatch > 28800
             ):  # allow 8 hrs to allocate for jobs that take a while to go from pending to dispatched
-                logger.warning(
-                    f"No allocations found for job {tracker.job_id} after 30 minutes, marking as LOST."
-                )
+                logger.warning(f"No allocations found for job {tracker.job_id} after 30 minutes, marking as LOST.")
                 tracker.status = JobStatus.LOST
-                tracker.error = Exception(
-                    "Job lost: No allocations found after timeout."
-                )
+                tracker.error = Exception("Job lost: No allocations found after timeout.")
                 tracker.completion_event.set()
                 await self._update_db_status(tracker)
                 return
@@ -272,9 +257,7 @@ class NomadJobManager:
                 logger.debug(f"Polling {tracker.job_id}: No allocations yet.")
                 return
 
-            latest_alloc = max(
-                allocations, key=lambda a: a.get("CreateTime", 0)
-            )
+            latest_alloc = max(allocations, key=lambda a: a.get("CreateTime", 0))
             await self._update_tracker_from_allocation(tracker, latest_alloc)
 
         except (
@@ -302,7 +285,7 @@ class NomadJobManager:
                     wrapped_exception = e.last_attempt.exception()
                 elif hasattr(e, "__cause__") and e.__cause__:
                     wrapped_exception = e.__cause__
-                
+
                 # Check if the wrapped exception is a URLNotFoundNomadException
                 if wrapped_exception and "URLNotFoundNomadException" in str(type(wrapped_exception)):
                     logger.error(
@@ -313,14 +296,10 @@ class NomadJobManager:
                     tracker.completion_event.set()
                     await self._update_db_status(tracker)
                     return
-            
-            logger.warning(
-                f"Unexpected error while polling for job {tracker.job_id}: {e}"
-            )
 
-    async def _update_tracker_from_allocation(
-        self, tracker: JobTracker, allocation: Dict[str, Any]
-    ):
+            logger.warning(f"Unexpected error while polling for job {tracker.job_id}: {e}")
+
+    async def _update_tracker_from_allocation(self, tracker: JobTracker, allocation: Dict[str, Any]):
         """Updates a tracker's state based on a Nomad allocation object."""
         if tracker.completion_event.is_set():
             return
@@ -332,9 +311,7 @@ class NomadJobManager:
         if new_status == old_status:
             return  # No change
 
-        logger.info(
-            f"Job {tracker.job_id} status change: {old_status.name} -> {new_status.name}"
-        )
+        logger.info(f"Job {tracker.job_id} status change: {old_status.name} -> {new_status.name}")
         tracker.status = new_status
         tracker.timestamp = datetime.now(timezone.utc)
         if not tracker.allocation_id:
@@ -358,9 +335,7 @@ class NomadJobManager:
 
         await self._update_db_status(tracker)
 
-    def _extract_final_state(
-        self, tracker: JobTracker, allocation: Dict[str, Any]
-    ):
+    def _extract_final_state(self, tracker: JobTracker, allocation: Dict[str, Any]):
         """Extracts the exit code and error message from a terminal allocation."""
         task_states = allocation.get("TaskStates", {})
         for task_name, task_state in task_states.items():
@@ -376,17 +351,11 @@ class NomadJobManager:
                             "Driver Failure",
                             "Killing",
                         ]:
-                            reason = event.get(
-                                "DisplayMessage", "No reason provided."
-                            )
-                            failure_details.append(
-                                f"Task '{task_name}' failed: {reason}"
-                            )
+                            reason = event.get("DisplayMessage", "No reason provided.")
+                            failure_details.append(f"Task '{task_name}' failed: {reason}")
                             break
                     if not failure_details:
-                        failure_details.append(
-                            f"Task '{task_name}' failed with exit code {tracker.exit_code}."
-                        )
+                        failure_details.append(f"Task '{task_name}' failed with exit code {tracker.exit_code}.")
                     tracker.error = Exception("; ".join(failure_details))
                 elif tracker.status == JobStatus.CANCELLED:
                     tracker.exit_code = task_state.get("ExitCode", 0)
@@ -420,9 +389,7 @@ class NomadJobManager:
 
     async def _update_db_status(self, tracker: JobTracker):
         """Updates an external database with the latest job status."""
-        logger.info(
-            f"Job {tracker.job_id} status updated: JobStatus.{tracker.status.name}"
-        )
+        logger.info(f"Job {tracker.job_id} status updated: JobStatus.{tracker.status.name}")
         if not self.log_db:
             return
         try:
@@ -432,6 +399,4 @@ class NomadJobManager:
                 stage=tracker.stage or "unknown",
             )
         except Exception as e:
-            logger.error(
-                f"Failed to update job status in DB for {tracker.job_id}: {e}"
-            )
+            logger.error(f"Failed to update job status in DB for {tracker.job_id}: {e}")

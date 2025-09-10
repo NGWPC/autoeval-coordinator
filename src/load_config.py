@@ -106,7 +106,9 @@ class Defaults(BaseModel):
         description="Max concurrent outgoing HTTP connections",
     )
     nomad_max_concurrent_dispatch: int = Field(
-        default_factory=lambda: int(os.getenv("NOMAD_MAX_CONCURRENT_DISPATCH", str(default_config.NOMAD_MAX_CONCURRENT_DISPATCH))),
+        default_factory=lambda: int(
+            os.getenv("NOMAD_MAX_CONCURRENT_DISPATCH", str(default_config.NOMAD_MAX_CONCURRENT_DISPATCH))
+        ),
         gt=0,
         le=10,
         description="Max concurrent Nomad API calls (should be less than urllib3's pool size of 10)",
