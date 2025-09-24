@@ -1,0 +1,19 @@
+While running the ripple collection evaluations I noticed a few things changes that could be made to the repository to improve the way the code works with Nomad. This should lead to more robust batch runs and reduce the need to rerun failed pipelines. I am grouping suggested changes that came out of performing the ripple collection batch runs here so that they can be prioritized when we have the time to improve the autoeval code.
+
+## Modify nomad_job_manager to be able to search for re-dispatched lost jobs 
+
+Right now if a job is lost at any stage then the pipeline fails and needs to be rerun. Lost jobs happen non-deterministically and do not indicate a problem with a jobs data or code. Nomad has the ability to reschedule lost jobs but then the dispatched job id changes. This shouldn't be an issue for us since our tags can be made so that each pipeline has a unique tag set. Right now however the nomad_job_manager doesn't fall back to trying to query all jobs that might match a tag set and once a dispatched job id is lost it can't find a job that has been rescheduled.
+
+Adding this ability to nomad_job_manager is also crucial for the ability for the pipeline to work with a Nomad API that is autoscaling clients. This is because downscaling actions trigger client drainage and this forces batch jobs running on a client given a drain command to be cancelled/lost. The batch jobs can be configured so that the jobs are allocated to a new client but this reintroduces the problem of the current nomad_job_manager implementation not being able to find the new dispatched job id.
+
+## Introduce a tunable aggregation argument for the inundate stage
+
+The inundate job is short-lived relative to the other jobs in the pipeline. There are also many more inundate jobs with a single fim100 eval run generating more than one million inundate jobs. Numerous, short-lived batch jobs are challenging for Nomad to handle and too many of them queued can result in "evaluation storms" where the server is constantly sending evaluation requests to clients that are already full. A simple solution to this is to modify the inundate job so that multiple invocations of inundate.py can be performed during a single dispatched inundate job. Ideally the number of invocations could be controlled by the pipeline so that the number of branches being inundated during an inundate job could be tuned for the compute and memory characteristics of the available Nomad clients to optimize performance.
+
+This change would dramatically reduce the load that batch pipeline runs place on the Nomad server and would likely allow us to run more pipelines in parallel.
+
+## Modify inundate job to return 0 for expected null results
+
+Currently the inundate job returns FAILED statuses and non-zero exit codes for certain job outcomes that are common and to be expected in the event that there is no flow information for a job or a given HAND output directory doesn't contain the necessary data to inundate a branch. These errors are not true failures and so should be handled differently so that Nomad knows not to reattempt them. Currently we don't reattempt inundate job runs at all because rerunning the large number of inundate jobs that get incorrectly marked as failed would waste too much time. Making it so that we could rerun inundate jobs in the event of true failures that might be fixed on a rerun would save us the effort of having to rerun entire pipelines. An example of this is that sometimes inundate jobs aren't able to find the AWS instances IAM credentials. This is a transient error that usually goes away if you rerun the job again. Another example is that occasionally S3 gives transient errors that usually don't show up again on a rerun.
+
+The same thing could be done for the mosaic and agreement maker jobs as well though it is less of an issue for those jobs.
